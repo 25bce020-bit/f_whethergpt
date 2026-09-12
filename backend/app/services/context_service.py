@@ -21,6 +21,8 @@ def get_context(session_id: str) -> Dict[str, Any]:
             "state": None,
             "last_intent": None,
             "last_time": None,
+            "selected_mode": "normal",
+            "last_active_mode": "normal",
             "history": [],
         }
 
@@ -33,6 +35,8 @@ def update_context(
     assistant_response: str,
     query: dict,
     location: dict | None = None,
+    selected_mode: str | None = None,
+    last_active_mode: str | None = None,
 ):
     """
     Update conversation context after a successful request.
@@ -52,6 +56,12 @@ def update_context(
 
     if query.get("time"):
         context["last_time"] = query.get("time")
+
+    if selected_mode is not None:
+        context["selected_mode"] = selected_mode
+
+    if last_active_mode is not None:
+        context["last_active_mode"] = last_active_mode
 
     # Store conversation history
     context["history"].append(

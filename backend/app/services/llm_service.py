@@ -345,6 +345,7 @@ Current user message:
 async def generate_weather_response(
     user_message: str,
     weather_data: dict,
+    mode_persona: str | None = None,
 ) -> str:
     """
     Generate a natural-language response using the weather data.
@@ -362,6 +363,8 @@ Weather data:
 {json.dumps(weather_data, ensure_ascii=False, default=str)}
 
 Instructions:
+
+- Response mode persona: {mode_persona or "Provide clear, practical general weather guidance."}
 
 - Give a clear, natural and useful answer.
 - Do not invent weather information.
