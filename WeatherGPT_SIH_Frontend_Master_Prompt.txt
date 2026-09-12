@@ -1,0 +1,1200 @@
+WEATHERGPT — SIH FRONTEND MASTER PROMPT
+================================================
+
+ROLE
+----
+You are a senior frontend architect, UI/UX designer, motion designer, and React engineer building the production-quality frontend for an SIH (Smart India Hackathon) project called "WeatherGPT".
+
+Build a polished, modern, futuristic weather intelligence platform rather than a generic weather website. The frontend must feel like a serious SIH-winning product: visually impressive during a live demo, intuitive for normal users, responsive on phones/laptops, accessible, performant, and structured so the backend APIs can be connected without rewriting the UI.
+
+IMPORTANT:
+- Do not create a collection of disconnected demo screens.
+- Build one coherent application with a consistent design system.
+- Do not invent backend endpoints. Keep API integration in a dedicated service layer and make endpoint names/configuration easy to replace.
+- Every feature must have loading, empty, error, and success states where applicable.
+- Use realistic weather data models and clearly distinguish live data from placeholder/mock data.
+- Avoid excessive visual effects that reduce readability or performance.
+- The final result must be impressive but usable.
+
+================================================
+1. PRODUCT VISION
+================================================
+
+WeatherGPT is an AI-powered weather intelligence assistant.
+
+The application should combine:
+1. Current weather information.
+2. Hourly and daily forecasts.
+3. Weather alerts and warnings.
+4. Location-aware weather.
+5. AI-powered natural-language weather assistance.
+6. Multilingual interaction.
+7. Multilingual voice input/output.
+8. Data visualizations.
+9. Maps/location context.
+10. A modern interactive interface capable of presenting complex weather information simply.
+
+The frontend should make the AI/weather experience feel like one unified product rather than a weather dashboard with a chatbot attached.
+
+================================================
+2. CORE TECHNOLOGY
+================================================
+
+Preferred stack:
+- React
+- TypeScript
+- Vite
+- React Router
+- Tailwind CSS or an equally maintainable utility/design-system approach
+- Framer Motion or an equivalent animation library
+- Three.js / React Three Fiber only where 3D genuinely improves the experience
+- Recharts or another lightweight charting library for weather graphs
+- Web APIs for browser capabilities where appropriate
+- Fetch/Axios through a centralized API client
+
+Keep the architecture modular.
+
+Suggested structure:
+
+src/
+  app/
+  assets/
+  components/
+    common/
+    navigation/
+    weather/
+    forecast/
+    alerts/
+    maps/
+    chat/
+    voice/
+    charts/
+    3d/
+  pages/
+  layouts/
+  hooks/
+  services/
+    api/
+    weather/
+    ai/
+    voice/
+    location/
+  store/
+  types/
+  utils/
+  constants/
+  styles/
+
+Do not put business logic directly inside large UI components.
+
+================================================
+3. APPLICATION NAVIGATION
+================================================
+
+Create a clear multi-page / multi-tab experience.
+
+Primary sections:
+
+A. HOME / DASHBOARD
+B. WEATHER
+C. FORECAST
+D. WEATHER MAP
+E. ALERTS
+F. WEATHERGPT / AI ASSISTANT
+G. VOICE
+H. SETTINGS / PREFERENCES
+
+Depending on final product scope, related sections can be combined, but the navigation must remain intuitive.
+
+Navigation requirements:
+- Desktop navigation can use a premium top navigation or elegant sidebar.
+- Mobile navigation must use a compact bottom navigation, drawer, or responsive menu.
+- Current tab must be visually obvious.
+- Every page must have a working back button where a user can logically navigate backward.
+- Use browser history correctly with React Router.
+- Never make the user feel trapped inside a page.
+- Breadcrumbs may be used for deeper pages.
+- Preserve relevant state when navigating when practical.
+
+BACK BUTTON:
+Create a reusable BackButton component.
+- Show it on secondary/detail pages.
+- Use router history when appropriate.
+- Fall back to the dashboard/home route if there is no useful history.
+- Include hover/focus states.
+- On mobile, keep it easily reachable without consuming excessive screen space.
+
+================================================
+4. VISUAL DESIGN LANGUAGE
+================================================
+
+Create a premium "futuristic weather intelligence" aesthetic.
+
+The design should combine:
+- Glassmorphism
+- Liquid/glass textures
+- Soft atmospheric gradients
+- Subtle depth
+- Clean typography
+- Weather-inspired motion
+- Dark and/or adaptive environment
+- Elegant data visualization
+- Soft glow rather than aggressive neon
+- Layered cards
+- Depth-aware hover interactions
+
+Do NOT make the interface look like:
+- a gaming dashboard
+- a crypto dashboard
+- a generic admin panel
+- a template copied from a UI library
+
+The design should feel purpose-built for weather + AI.
+
+================================================
+5. LIQUID / GLASS TEXTURE SYSTEM
+================================================
+
+Use liquid-style visual treatment selectively.
+
+Examples:
+- Translucent weather cards.
+- Frosted glass panels.
+- Subtle liquid distortion behind hero sections.
+- Animated gradient blobs.
+- Soft flowing background layers.
+- Weather-dependent atmospheric backgrounds.
+- Liquid glass buttons.
+- Refraction-like highlights on selected components.
+
+Rules:
+- Text must remain highly readable.
+- Do not apply blur everywhere.
+- Avoid visual noise.
+- Use CSS gradients, pseudo-elements, SVG filters, canvas, or WebGL only where justified.
+- Provide a reduced-motion fallback.
+- Keep the visual layer separate from content so accessibility is preserved.
+
+================================================
+6. 3D INTERACTIVE ELEMENTS
+================================================
+
+Add tasteful 3D interaction.
+
+Possible elements:
+- A 3D/2.5D globe or atmosphere visualization.
+- Interactive weather orb.
+- 3D weather condition illustrations.
+- Depth-based weather cards.
+- 3D location marker.
+- Floating weather particles.
+- Interactive forecast objects.
+
+3D hover behavior:
+- Gentle tilt based on pointer position.
+- Subtle parallax.
+- Highlight/reflection follows cursor.
+- Small elevation on hover.
+- Smooth return animation.
+- No sudden movement.
+- No interaction that makes reading difficult.
+
+IMPORTANT:
+3D must be progressive enhancement.
+If WebGL is unavailable or performance is poor:
+- automatically fall back to CSS/SVG/2D visuals.
+- never leave an empty canvas.
+- never block core weather functionality.
+
+Do not use 3D on every card. Reserve it for hero/high-value interactions.
+
+================================================
+7. HERO SECTION
+================================================
+
+The dashboard hero should immediately communicate:
+
+"Weather intelligence, explained by AI."
+
+Include:
+- Current location.
+- Current temperature.
+- Weather condition.
+- Feels-like temperature.
+- High/low.
+- Humidity.
+- Wind.
+- Visibility/pressure where data is available.
+- Dynamic weather visual.
+- AI assistant entry point.
+- Voice interaction button.
+- Last updated indicator.
+
+Use an atmospheric background that changes according to weather conditions and/or time of day.
+
+Examples:
+- Clear: soft sky/light atmosphere.
+- Cloudy: layered clouds.
+- Rain: subtle animated rain.
+- Storm: restrained lightning/cloud effect.
+- Night: stars/ambient particles.
+- Sunrise/sunset: warm atmospheric gradient.
+
+Never sacrifice performance for the effect.
+
+================================================
+8. DASHBOARD
+================================================
+
+The dashboard should contain:
+
+1. Current weather hero.
+2. Quick metrics.
+3. Hourly forecast.
+4. 7-day/extended forecast.
+5. AI weather insight.
+6. Alerts.
+7. Weather trend chart.
+8. Location/map preview.
+9. Air quality or other environmental metrics if supplied by backend.
+10. Personalized/recommended actions if supported by backend.
+
+Use responsive grid layouts.
+
+Cards should have:
+- consistent radius
+- consistent spacing
+- visual hierarchy
+- meaningful icons
+- hover states
+- keyboard focus states
+- skeleton loaders
+- clear error states
+
+================================================
+9. WEATHER DETAILS PAGE
+================================================
+
+Create a detailed weather page.
+
+Sections:
+- Current conditions.
+- Temperature trend.
+- Feels-like.
+- Humidity.
+- Wind speed/direction.
+- Pressure.
+- Visibility.
+- UV index.
+- Sunrise/sunset.
+- Cloud cover.
+- Precipitation probability.
+- Air quality where supported.
+- Other backend-provided weather metrics.
+
+Use charts rather than displaying every value as a plain number.
+
+Charts must:
+- have readable labels
+- support responsive resizing
+- show tooltips
+- work on touch devices
+- use accessible descriptions
+- avoid excessive animation
+
+================================================
+10. FORECAST PAGE
+================================================
+
+Provide:
+- Hourly forecast.
+- Daily forecast.
+- Expandable day details.
+- Temperature range.
+- Rain probability.
+- Wind.
+- Condition icons.
+- Sunrise/sunset.
+- Relevant warnings.
+
+Allow users to switch between:
+- hourly
+- daily
+- detailed view
+
+Use smooth transitions.
+
+================================================
+11. WEATHER MAP
+================================================
+
+Create a dedicated map experience.
+
+Possible layers:
+- temperature
+- precipitation
+- wind
+- clouds
+- pressure
+- weather alerts
+
+Requirements:
+- clear layer controls
+- legend
+- zoom controls
+- current location button
+- selected location information
+- responsive map layout
+- mobile-friendly controls
+
+Do not hard-code a map provider. Keep the map implementation isolated so the provider can be changed later.
+
+================================================
+12. WEATHER ALERTS
+================================================
+
+Alerts must be visually prominent but not frightening.
+
+Create:
+- alert list
+- severity levels
+- alert detail
+- affected area
+- time issued
+- expiry
+- recommended action
+- source if backend provides it
+
+Severity should have accessible visual indicators, not color alone.
+
+Examples:
+- informational
+- advisory
+- watch
+- warning
+- emergency
+
+Add a compact alert banner to the dashboard when important.
+
+================================================
+13. WEATHERGPT AI ASSISTANT
+================================================
+
+This is a major differentiating feature.
+
+Create a premium AI chat interface.
+
+Features:
+- user messages
+- AI responses
+- streaming response support if backend supports it
+- typing/loading state
+- message timestamps
+- retry failed response
+- copy response
+- clear conversation
+- suggested questions
+- weather-aware context
+- location-aware context
+- conversation history if backend supports it
+
+Suggested prompts:
+- "Will it rain today?"
+- "Should I carry an umbrella?"
+- "What is the best time to go outside?"
+- "Will this weather affect my travel?"
+- "Explain today's weather simply."
+- "How will the weather change tonight?"
+
+The AI should feel integrated with weather data.
+
+Example:
+Instead of showing only "28°C", the UI can present:
+"28°C, but it feels like 31°C because of humidity."
+
+Do not fake AI responses in production mode.
+
+================================================
+14. VOICE INTERACTION
+================================================
+
+Voice is a first-class feature.
+
+Include:
+- microphone button
+- listening state
+- processing state
+- speaking state
+- stop button
+- retry
+- permission/error state
+- transcript display
+- AI response playback
+
+Create a beautiful voice interaction UI:
+- animated central orb
+- audio waveform
+- subtle particles
+- microphone pulse
+- clear state labels
+
+States:
+IDLE
+LISTENING
+PROCESSING
+RESPONDING
+ERROR
+
+The UI must clearly communicate what is happening.
+
+================================================
+15. MULTILINGUAL SUPPORT
+================================================
+
+Design the frontend for multilingual operation from the beginning.
+
+Do not hard-code user-visible strings throughout components.
+
+Use a translation/i18n layer.
+
+Support architecture for:
+- English
+- Hindi
+- Gujarati
+- additional Indian languages later
+
+Requirements:
+- language selector
+- translated navigation
+- translated weather labels
+- translated buttons
+- translated errors
+- translated AI/voice UI
+- RTL readiness where future languages require it
+
+Do not assume translated text has the same length as English.
+
+Voice language selection should be independent but synchronized with UI language when appropriate.
+
+================================================
+16. LOCATION
+================================================
+
+Location should support:
+- browser geolocation
+- manual search
+- saved/recent locations
+- current location indicator
+
+Handle:
+- permission denied
+- location unavailable
+- timeout
+- invalid search
+- backend location errors
+
+Never repeatedly request location permission without user action.
+
+================================================
+17. SEARCH
+================================================
+
+Create a polished location search component.
+
+Requirements:
+- search icon
+- keyboard support
+- debounced requests
+- autocomplete if backend supports it
+- recent locations
+- loading indicator
+- empty state
+- clear button
+- mobile-friendly dropdown
+
+================================================
+18. WEATHER VISUALIZATION
+================================================
+
+Use charts to make trends understandable.
+
+Recommended charts:
+- temperature line
+- precipitation probability
+- humidity
+- wind
+- pressure
+- UV
+- air quality
+
+Charts should be visually consistent with the overall design.
+
+Allow:
+- hover tooltip on desktop
+- touch interaction on mobile
+- accessible data summaries
+
+================================================
+19. MICRO-INTERACTIONS
+================================================
+
+Add polished micro-interactions:
+
+- button hover
+- card elevation
+- icon animation
+- page transitions
+- tab underline animation
+- dropdown transitions
+- modal transitions
+- skeleton shimmer
+- success feedback
+- error feedback
+- toast notifications
+- location selection animation
+- chat message appearance
+- voice state transitions
+
+Use spring-based motion where appropriate.
+
+Avoid:
+- excessive bouncing
+- long transitions
+- animations that delay interaction
+- animation on every element
+
+Typical transitions should feel fast, around 150–350ms unless a larger cinematic transition is intentional.
+
+================================================
+20. PAGE TRANSITIONS
+================================================
+
+Use subtle route transitions.
+
+Recommended:
+- fade
+- slight vertical movement
+- shared-element-like transitions where useful
+
+Never make navigation feel slow.
+
+Respect:
+prefers-reduced-motion
+
+When reduced motion is enabled:
+- disable parallax
+- disable unnecessary 3D motion
+- minimize particle animation
+- use simple fades
+
+================================================
+21. RESPONSIVE DESIGN
+================================================
+
+Design mobile-first.
+
+Breakpoints should support:
+- small phones
+- large phones
+- tablets
+- laptops
+- large desktop displays
+
+Desktop:
+- richer multi-column dashboard
+- larger charts
+- expanded navigation
+- larger 3D visualization
+
+Mobile:
+- stacked cards
+- horizontal forecast scrolling where appropriate
+- bottom navigation or compact menu
+- thumb-friendly controls
+- no horizontal page overflow
+- simplified 3D effects
+
+================================================
+22. ACCESSIBILITY
+================================================
+
+Follow strong accessibility practices.
+
+Requirements:
+- semantic HTML
+- keyboard navigation
+- visible focus indicators
+- accessible labels
+- ARIA only where needed
+- sufficient contrast
+- screen-reader-friendly weather data
+- charts with textual summaries
+- buttons must have clear accessible names
+- don't communicate status through color alone
+- reduced-motion support
+
+Voice controls must be accessible without voice.
+
+================================================
+23. LOADING STATES
+================================================
+
+Never show a blank screen while data loads.
+
+Use:
+- skeleton cards
+- chart skeletons
+- map loading state
+- AI typing indicator
+- voice processing indicator
+
+Skeletons should resemble the actual content layout.
+
+================================================
+24. ERROR STATES
+================================================
+
+Create reusable error components.
+
+Examples:
+- Weather unavailable
+- AI unavailable
+- Location denied
+- Voice permission denied
+- Network disconnected
+- API timeout
+- Invalid location
+- Map failed
+- Unsupported browser capability
+
+Errors should explain:
+1. what happened
+2. what the user can do
+3. retry action where appropriate
+
+================================================
+25. OFFLINE / NETWORK EXPERIENCE
+================================================
+
+If practical:
+- detect offline status
+- show a compact offline indicator
+- preserve cached/latest weather data
+- disable actions requiring the backend
+- explain stale data clearly
+
+Do not pretend cached data is live.
+
+================================================
+26. SETTINGS
+================================================
+
+Settings should include:
+- language
+- voice language
+- temperature unit
+- wind unit
+- theme
+- reduced motion
+- location preferences
+- notification preferences if supported
+- saved locations
+
+Keep settings simple and organized.
+
+================================================
+27. THEMING
+================================================
+
+Support a polished default theme and optional light/dark behavior if appropriate.
+
+Weather-aware backgrounds may change, but UI text and controls must remain stable.
+
+Use design tokens for:
+- background
+- foreground
+- muted text
+- card
+- border
+- accent
+- warning
+- danger
+- success
+- shadows
+- blur
+- spacing
+- radius
+
+Do not scatter arbitrary colors throughout the code.
+
+================================================
+28. COMPONENT DESIGN SYSTEM
+================================================
+
+Create reusable components such as:
+
+AppShell
+Navbar
+Sidebar
+MobileNav
+BackButton
+PageHeader
+WeatherHero
+WeatherMetric
+WeatherCard
+HourlyForecast
+DailyForecast
+ForecastCard
+WeatherChart
+AlertBanner
+AlertCard
+AlertDetail
+LocationSearch
+LocationSelector
+MapView
+MapLayerControl
+AIChat
+ChatMessage
+SuggestedPrompt
+VoiceAssistant
+VoiceOrb
+AudioWaveform
+LanguageSelector
+UnitSelector
+LoadingSkeleton
+ErrorState
+EmptyState
+Toast
+Modal
+Tooltip
+GlassCard
+LiquidBackground
+Interactive3DCard
+
+Avoid creating huge components with hundreds of lines.
+
+================================================
+29. API INTEGRATION ARCHITECTURE
+================================================
+
+Backend integration must be centralized.
+
+Create service modules such as:
+
+weatherService
+forecastService
+locationService
+alertService
+aiService
+voiceService
+
+Create typed request/response models.
+
+Example conceptual interfaces:
+
+WeatherData
+ForecastData
+HourlyForecast
+DailyForecast
+WeatherAlert
+AIMessage
+VoiceRequest
+VoiceResponse
+LocationResult
+
+Do not couple components directly to raw fetch calls.
+
+Use environment variables for:
+- API base URL
+- map configuration
+- public frontend configuration
+
+Never expose secret API keys in frontend code.
+
+================================================
+30. BACKEND-READY DATA FLOW
+================================================
+
+The frontend should be prepared for the planned backend architecture.
+
+Conceptual flow:
+
+USER
+  ↓
+FRONTEND
+  ↓
+API SERVICE LAYER
+  ↓
+BACKEND
+  ↓
+WEATHER / AI / LOCATION / VOICE SERVICES
+  ↓
+NORMALIZED RESPONSE
+  ↓
+FRONTEND STATE
+  ↓
+UI
+
+For AI:
+User → Chat UI → AI API → response → message renderer
+
+For voice:
+Microphone → speech input → backend/service → AI → speech output → audio player
+
+For weather:
+Location → weather API → normalized weather state → dashboard
+
+Do not assume every external provider is called directly from the browser.
+
+================================================
+31. STATE MANAGEMENT
+================================================
+
+Separate:
+- server state
+- UI state
+- user preferences
+- chat state
+- location state
+
+Avoid unnecessary global state.
+
+Persist only what should survive page reloads.
+
+Potential persisted values:
+- selected location
+- language
+- unit preference
+- theme preference
+- accessibility preference
+
+Do not persist sensitive information unnecessarily.
+
+================================================
+32. PERFORMANCE
+================================================
+
+The application must remain fast despite advanced visuals.
+
+Requirements:
+- lazy-load heavy 3D modules
+- lazy-load maps
+- code split routes
+- optimize images
+- avoid unnecessary rerenders
+- debounce search
+- virtualize long lists where necessary
+- pause offscreen animations
+- avoid huge background videos
+- avoid excessive WebGL
+- use memoization only when useful
+
+The dashboard should become usable before every advanced visual finishes loading.
+
+================================================
+33. SECURITY
+================================================
+
+Frontend security requirements:
+- never store secret API keys
+- never trust client-side authorization
+- sanitize/escape user-generated content
+- safely render AI output
+- prevent unsafe HTML injection
+- validate API responses
+- handle expired sessions
+- do not log sensitive information
+
+================================================
+34. AI RESPONSE RENDERING
+================================================
+
+AI responses may contain:
+- Markdown
+- lists
+- tables
+- weather metrics
+- recommendations
+
+Render them cleanly.
+
+If supported, allow structured weather insight cards inside chat.
+
+Example:
+AI response
++
+temperature badge
++
+rain probability
++
+recommendation
+
+But do not overwhelm normal text answers with cards.
+
+================================================
+35. WEATHER-AWARE UI
+================================================
+
+Make the application feel alive.
+
+UI atmosphere should respond to:
+- weather condition
+- temperature range
+- precipitation
+- time of day
+- alerts
+
+Examples:
+Rain:
+- subtle droplets
+- cool translucent layers
+
+Storm:
+- darker atmospheric treatment
+- restrained lightning accent
+
+Clear:
+- open bright gradient
+- gentle floating particles
+
+Night:
+- dark sky
+- subtle stars
+
+Keep effects subtle and avoid distracting users.
+
+================================================
+36. INTERACTION DETAILS
+================================================
+
+Cards:
+- hover lift
+- slight tilt only for selected premium cards
+- soft border highlight
+- cursor-following highlight where appropriate
+
+Buttons:
+- hover
+- active
+- disabled
+- loading
+- keyboard focus
+
+Inputs:
+- focus ring
+- validation
+- loading
+- clear action
+
+Tabs:
+- animated active indicator
+- keyboard navigation
+- swipe/scroll support on mobile if useful
+
+Modals:
+- backdrop
+- focus management
+- escape-to-close
+- mobile bottom-sheet behavior when appropriate
+
+================================================
+37. EMPTY STATES
+================================================
+
+Create beautiful empty states for:
+- no saved locations
+- no alerts
+- no chat history
+- no search results
+- unavailable weather
+- unavailable forecast
+
+Do not simply show "No data."
+
+Tell the user what to do next.
+
+================================================
+38. DEMO / SIH PRESENTATION MODE
+================================================
+
+The application should be impressive in a live SIH demonstration.
+
+Create a polished default experience where:
+- dashboard loads quickly
+- a recognizable location is visible
+- weather data looks realistic
+- AI assistant is easy to discover
+- voice button is prominent
+- alerts are easy to demonstrate
+- multilingual selector is visible
+- map/visualization can be reached in one or two actions
+
+Do not use fake functionality disguised as real functionality.
+
+If demo/mock mode is needed, clearly separate it from production API mode.
+
+================================================
+39. CODE QUALITY
+================================================
+
+Follow:
+- TypeScript strict typing
+- reusable components
+- clear naming
+- small focused modules
+- no duplicated UI logic
+- no hard-coded API URLs
+- no hard-coded user-facing strings
+- comments only where they explain non-obvious decisions
+- consistent formatting
+- linting
+- maintainable folder structure
+
+Avoid:
+- giant components
+- duplicated styles
+- magic numbers
+- unnecessary dependencies
+- unused libraries
+- placeholder lorem ipsum
+- fake buttons that do nothing
+
+================================================
+40. FINAL UI QUALITY BAR
+================================================
+
+Before considering the frontend complete, verify:
+
+[ ] All navigation works.
+[ ] Back button works on secondary pages.
+[ ] Dashboard is responsive.
+[ ] Weather cards are reusable.
+[ ] Forecast is responsive.
+[ ] Charts resize correctly.
+[ ] Map is isolated and replaceable.
+[ ] AI chat works with the API service abstraction.
+[ ] Voice UI has all states.
+[ ] Multilingual architecture is implemented.
+[ ] Language switching updates the UI.
+[ ] Location permissions are handled.
+[ ] Alerts have severity and detail.
+[ ] Loading states exist.
+[ ] Error states exist.
+[ ] Empty states exist.
+[ ] 3D effects have fallbacks.
+[ ] Liquid/glass effects do not reduce readability.
+[ ] Reduced-motion mode works.
+[ ] Keyboard navigation works.
+[ ] No horizontal overflow on mobile.
+[ ] No secrets are exposed.
+[ ] API calls are centralized.
+[ ] Components are modular.
+[ ] No console errors.
+[ ] No fake production functionality.
+[ ] Performance is acceptable.
+[ ] UI looks polished enough for an SIH presentation.
+
+================================================
+41. DEVELOPMENT APPROACH
+================================================
+
+Build in phases.
+
+PHASE 1 — FOUNDATION
+- React + TypeScript setup
+- routing
+- design tokens
+- global styles
+- responsive shell
+- navigation
+- reusable components
+
+PHASE 2 — CORE WEATHER
+- location
+- current weather
+- hourly forecast
+- daily forecast
+- weather metrics
+- loading/error states
+
+PHASE 3 — VISUALIZATION
+- charts
+- weather-aware backgrounds
+- atmospheric effects
+- map
+
+PHASE 4 — WEATHERGPT
+- chat UI
+- API service
+- message states
+- suggested prompts
+- AI insight cards
+
+PHASE 5 — VOICE
+- microphone states
+- transcription
+- AI response
+- speech output
+- voice animation
+
+PHASE 6 — MULTILINGUAL
+- i18n
+- language selector
+- Indian language support
+- translated UI
+- voice language handling
+
+PHASE 7 — ADVANCED UI
+- 3D hero/visualization
+- hoverable depth
+- liquid glass
+- advanced motion
+- page transitions
+
+PHASE 8 — POLISH
+- accessibility
+- mobile optimization
+- performance
+- error handling
+- offline behavior
+- SIH demo flow
+
+================================================
+42. IMPORTANT IMPLEMENTATION RULE
+================================================
+
+Do not attempt to build every advanced effect before the functional application exists.
+
+Priority order:
+
+FUNCTIONALITY
+→ RESPONSIVE STRUCTURE
+→ DATA INTEGRATION
+→ ACCESSIBILITY
+→ VISUAL POLISH
+→ 3D / LIQUID EFFECTS
+→ PERFORMANCE OPTIMIZATION
+
+The product must still work if every visual effect is disabled.
+
+================================================
+43. DESIGN PRINCIPLE
+================================================
+
+The final product should communicate:
+
+"WeatherGPT understands the weather, explains it naturally, speaks your language, and helps you make decisions."
+
+It should feel:
+- intelligent
+- trustworthy
+- modern
+- atmospheric
+- interactive
+- fast
+- accessible
+- premium
+- Indian-user friendly
+- SIH-ready
+
+Build the frontend as a real product, not a static prototype.
