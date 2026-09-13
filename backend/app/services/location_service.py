@@ -1,4 +1,5 @@
 import os
+import re
 
 import httpx
 
@@ -7,6 +8,22 @@ from app.services.cache_service import get_or_load
 
 GEOCODING_URL = "https://geocoding-api.open-meteo.com/v1/search"
 LOCATION_TTL = int(os.getenv("OPEN_METEO_LOCATION_CACHE_TTL", "86400"))
+
+
+def normalize_location_name(name: str | None) -> str | None:
+    """Remove common query glue without changing the centralized geocoding path."""
+    if not name:
+        return None
+    normalized = " ".join(str(name).strip().split())
+    # A malformed extractor can include the next sentence ("Ahmedabad. Is").
+    # Location names sent to this service are a single geocoding query, so the
+    # first sentence is the safe canonical candidate.
+    normalized = re.split(r"[.?!]", normalized, maxsplit=1)[0].strip()
+    normalized = re.sub(r"[?.!,;:]+$", "", normalized).strip()
+    # English and Indian-language postpositions which may trail a city returned
+    # by an LLM or fallback parser (for example, "Ahmedabad mein").
+    normalized = re.sub(r"\s+(?:in|at|for|mein|me|में|मा(?:ं|ँ)|માં|मध्ये|இல்)$", "", normalized, flags=re.IGNORECASE)
+    return normalized or None
 
 
 async def search_location(name: str):

@@ -1,4 +1,4 @@
-from fastapi import FastAPI, Query
+from fastapi import FastAPI, File, Form, HTTPException, Query, UploadFile
 from pydantic import BaseModel
 from datetime import date, timedelta
 from app.services.recommendation_service import (
@@ -85,7 +85,12 @@ from app.services.weather_service import (
     format_hourly_forecast,
 )
 
-from app.services.location_service import search_location
+from app.services.location_service import search_location, normalize_location_name
+from app.services.language_service import (
+    canonicalize_for_fallback,
+    extract_location_hint,
+    resolve_response_language,
+)
 
 from app.services.advisory_service import (
     generate_weather_advisories,
@@ -93,6 +98,11 @@ from app.services.advisory_service import (
 from app.services.conversation_service import (
     UNRELATED_RESPONSE,
     get_conversation_response,
+)
+from app.services.voice_service import (
+    VoiceValidationError,
+    browser_tts_contract,
+    transcribe_audio,
 )
 
 
@@ -621,6 +631,7 @@ async def gfs_weather(
 class ChatRequest(BaseModel):
     message: str
     session_id: str = "default"
+    language: str | None = None
 
 @app.delete("/chat/session/{session_id}")
 async def delete_chat_session(session_id: str):
@@ -671,14 +682,18 @@ async def weather_model_comparison(
 # CHAT
 # ============================================================
 
-@app.post("/chat")
-async def chat(request: ChatRequest):
+async def process_chat_message(request: ChatRequest):
 
     # --------------------------------------------------------
     # STEP 0: Load conversation context
     # --------------------------------------------------------
 
     context = get_context(request.session_id)
+    language = resolve_response_language(
+        request.language,
+        request.message,
+        context.get("language"),
+    )
 
     await save_chat_message(
         session_id=request.session_id,
@@ -717,6 +732,7 @@ async def chat(request: ChatRequest):
             request.message,
             response_text,
             query,
+            language=language,
         )
         await save_assistant_response(response_text, "conversation")
 
@@ -725,6 +741,7 @@ async def chat(request: ChatRequest):
             "understanding": query,
             "tool": tool_choice,
             "response": response_text,
+            "language": language,
         }
 
     # --------------------------------------------------------
@@ -735,18 +752,25 @@ async def chat(request: ChatRequest):
             query = await understand_with_llm(
         request.message,
         context,
+        language,
     )
 
     except Exception:
         # Fallback to existing rule-based understanding
-        query = understand_query(request.message)
+        query = understand_query(canonicalize_for_fallback(request.message, language))
+        query["location"] = query.get("location") or extract_location_hint(
+            request.message,
+            language,
+        )
     if query.get("intent") not in {"conversation", "unrelated", "unknown"} and not query.get("location"):
         previous_location = context.get("location")
 
         if previous_location:
             query["location"] = previous_location
     intent = query.get("intent")
-    location_name = query.get("location")
+    location_name = normalize_location_name(query.get("location"))
+    query["location"] = location_name
+    query["language"] = language
 
     # --------------------------------------------------------
     # STEP 2: Select weather tool using Groq
@@ -756,6 +780,7 @@ async def chat(request: ChatRequest):
         tool_choice = await choose_weather_tool(
     request.message,
     context,
+    language,
 )
 
     except Exception:
@@ -894,6 +919,7 @@ async def chat(request: ChatRequest):
             response_text = await generate_weather_response(
                 request.message,
                 data_for_llm,
+                language,
             )
         except Exception:
             response_text = weather
@@ -962,6 +988,7 @@ async def chat(request: ChatRequest):
                 response_text = await generate_weather_response(
                     request.message,
                     data_for_llm,
+                    language,
                 )
             except Exception:
                 response_text = (
@@ -1057,6 +1084,7 @@ async def chat(request: ChatRequest):
             response_text = await generate_weather_response(
                 request.message,
                 data_for_llm,
+                language,
             )
         except Exception:
             response_text = "Here is the available forecast."
@@ -1155,6 +1183,7 @@ async def chat(request: ChatRequest):
             response_text = await generate_weather_response(
                 request.message,
                 data_for_llm,
+                language,
             )
         except Exception:
             response_text = "Here is the available historical weather data."
@@ -1215,6 +1244,7 @@ async def chat(request: ChatRequest):
             response_text = await generate_weather_response(
                 request.message,
                 data_for_llm,
+                language,
             )
         except Exception:
             response_text = (
@@ -1294,6 +1324,7 @@ async def chat(request: ChatRequest):
             response_text = await generate_weather_response(
                 request.message,
                 data_for_llm,
+                language,
             )
         except Exception:
             response_text = (
@@ -1360,6 +1391,7 @@ async def chat(request: ChatRequest):
             response_text = await generate_weather_response(
                 request.message,
                 data_for_llm,
+                language,
             )
         except Exception:
             response_text = "Here are my weather-based recommendations."
@@ -1416,6 +1448,7 @@ async def chat(request: ChatRequest):
             response_text = await generate_weather_response(
                 request.message,
                 data_for_llm,
+                language,
             )
 
         except Exception:
@@ -1514,6 +1547,7 @@ async def chat(request: ChatRequest):
             response_text = await generate_weather_response(
                 request.message,
                 data_for_llm,
+                language,
             )
 
         except Exception:
@@ -1583,6 +1617,7 @@ async def chat(request: ChatRequest):
             response_text = await generate_weather_response(
                 request.message,
                 data_for_llm,
+                language,
             )
         except Exception:
             if comparison:
@@ -1667,6 +1702,7 @@ async def chat(request: ChatRequest):
             response_text = await generate_weather_response(
                 request.message,
                 data_for_llm,
+                language,
             )
         except Exception:
             if matching_alerts:
@@ -1723,3 +1759,66 @@ async def chat(request: ChatRequest):
             "tool": tool_choice,
             "response": response_text,
         }
+
+
+@app.post("/chat", summary="Send a text query to WeatherGPT")
+async def chat(request: ChatRequest):
+    """Public text-chat endpoint retained for backward compatibility."""
+    return await process_chat_message(request)
+
+
+async def _voice_transcription(audio: UploadFile, language: str | None) -> dict:
+    try:
+        return await transcribe_audio(
+            audio.filename,
+            audio.content_type,
+            await audio.read(),
+            language,
+        )
+    except VoiceValidationError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
+    except RuntimeError as exc:
+        raise HTTPException(status_code=503, detail="Speech transcription is unavailable. Please try again.") from exc
+    finally:
+        await audio.close()
+
+
+@app.post(
+    "/voice/transcribe",
+    summary="Transcribe an uploaded audio recording",
+    description="Accepts WAV, MP3, WebM, OGG, MP4, or M4A up to VOICE_MAX_AUDIO_SIZE_MB (10 MB by default).",
+)
+async def voice_transcribe(
+    audio: UploadFile = File(..., description="Audio recording to transcribe"),
+    session_id: str = Form("default", description="Conversation session identifier"),
+    language: str | None = Form(None, description="Optional supported language code"),
+):
+    transcription = await _voice_transcription(audio, language)
+    return {"success": True, **transcription, "session_id": session_id}
+
+
+@app.post(
+    "/voice/chat",
+    summary="Transcribe audio and send it through the WeatherGPT chat pipeline",
+    description="Uses the same session context, database persistence, language layer, and weather tools as POST /chat.",
+)
+async def voice_chat(
+    audio: UploadFile = File(..., description="Audio recording to transcribe and process"),
+    session_id: str = Form("default", description="Conversation session identifier"),
+    language: str | None = Form(None, description="Optional supported language code"),
+):
+    transcription = await _voice_transcription(audio, language)
+    response = await process_chat_message(ChatRequest(
+        message=transcription["transcript"],
+        session_id=session_id,
+        language=transcription["language"],
+    ))
+    return {
+        "success": True,
+        "transcript": transcription["transcript"],
+        "language": transcription["language"],
+        "session_id": session_id,
+        "response": response.get("response"),
+        "chat": response,
+        "tts": browser_tts_contract(transcription["language"]),
+    }
