@@ -52,8 +52,12 @@ MODE_CONFIGURATIONS: dict[WeatherMode, ModeConfiguration] = {
         name="Traveller Mode",
         description="Weather framing for trip and outdoor planning.",
         persona_prompt=(
-            "Frame the available weather information for travel and outdoor planning. "
-            "Do not invent itinerary or booking details."
+            "Provide practical, concise, destination-aware travel and outdoor guidance using only "
+            "the supplied traveller_advisory and weather data. Preserve the deterministic travel "
+            "suitability status; do not invent temperature, rainfall, rain probability, warnings, "
+            "road conditions, restrictions, attractions, itineraries, or booking details. Clearly "
+            "separate official IMD warnings from WeatherGPT traveller advice and state limitations "
+            "when weather or hourly data is unavailable."
         ),
     ),
 }

@@ -111,6 +111,10 @@ from app.services.researcher_service import (
     choose_researcher_tool,
     format_researcher_analysis,
 )
+from app.services.traveller_service import (
+    build_traveller_advisory,
+    format_traveller_advisory,
+)
 
 
 app = FastAPI(
@@ -749,6 +753,16 @@ async def chat(request: ChatRequest):
                 )
             except Exception:
                 return format_researcher_analysis(analysis)
+        if mode_resolution.active_mode is WeatherMode.TRAVELLER:
+            advisory = weather_data["traveller_advisory"]
+            try:
+                return await generate_weather_response(
+                    request.message,
+                    weather_data,
+                    mode_persona=mode_configuration.persona_prompt,
+                )
+            except Exception:
+                return format_traveller_advisory(advisory)
         return await generate_weather_response(
             request.message,
             weather_data,
@@ -838,6 +852,19 @@ async def chat(request: ChatRequest):
     except Exception:
         # Fallback to existing rule-based understanding
         query = understand_query(request.message)
+    # Keep travel destinations separate from temporal wording when an upstream
+    # extractor returns a phrase such as "Goa tomorrow". This only applies the
+    # already-established rule parser as a narrow Traveller-mode correction.
+    if mode_resolution.active_mode is WeatherMode.TRAVELLER:
+        rule_query = understand_query(request.message)
+        extracted_location = query.get("location")
+        if rule_query.get("location") and (
+            not extracted_location
+            or any(phrase in str(extracted_location).lower() for phrase in ("tomorrow", "today", "day after tomorrow", "next week", "next few days"))
+        ):
+            query["location"] = rule_query["location"]
+        if query.get("time") in (None, "unspecified") and rule_query.get("time") != "unspecified":
+            query["time"] = rule_query["time"]
     if (
         query.get("intent") not in {"conversation", "unrelated", "unknown"}
         and not query.get("location")
@@ -882,6 +909,8 @@ async def chat(request: ChatRequest):
     # deterministic farmer layer. No separate weather tool/client is introduced.
     if mode_resolution.active_mode is WeatherMode.FARMER:
         selected_tool = "farmer_advisory"
+    if mode_resolution.active_mode is WeatherMode.TRAVELLER:
+        selected_tool = "traveller_advisory"
 
     # --------------------------------------------------------
     # STEP 3: Normalize tool name
@@ -913,7 +942,7 @@ async def chat(request: ChatRequest):
     tool_choice["tool"] = selected_tool
 
     if (
-        mode_resolution.active_mode is not WeatherMode.FARMER
+        mode_resolution.active_mode not in {WeatherMode.FARMER, WeatherMode.TRAVELLER}
         and (query.get("intent") in {"unrelated", "unknown"} or selected_tool == "conversation")
     ):
         response_text = UNRELATED_RESPONSE
@@ -1053,6 +1082,54 @@ async def chat(request: ChatRequest):
             "official_warning_status": "available" if cached_imd is not None else "unavailable",
             "farmer_advisory": advisory,
             "response": response_text,
+        }
+
+    # ========================================================
+    # TOOL: TRAVELLER INTELLIGENCE (Sprint 18)
+    # ========================================================
+    if selected_tool == "traveller_advisory":
+        current_data = await get_current_weather(latitude, longitude)
+        current_weather = format_current_weather(current_data)
+        forecast_data = await get_forecast(latitude, longitude)
+        forecast = format_forecast(forecast_data)
+        hourly_data = await get_hourly_forecast(latitude, longitude)
+        hourly_forecast = format_hourly_forecast(hourly_data)
+
+        # Use the existing time semantics to keep hourly evidence on the travel date.
+        travel_date = resolve_date(query.get("time", ""))
+        target_hourly = hourly_forecast
+        if travel_date:
+            target_hourly = [hour for hour in hourly_forecast if str(hour.get("time", "")).startswith(travel_date.isoformat())]
+
+        try:
+            cached_imd = await get_cached_imd_alerts(refresh_if_missing=True)
+        except Exception:
+            cached_imd = None
+        all_alerts = cached_imd["data"].get("alerts", []) if cached_imd else []
+        matching_alerts = filter_alerts_for_location(
+            all_alerts, latitude, longitude, location_info.get("name"), location_info.get("state")
+        )
+        advisory = build_traveller_advisory(
+            destination=location_info["name"], current_weather=current_weather,
+            forecast=forecast, hourly_forecast=target_hourly,
+            imd_warnings=matching_alerts if cached_imd is not None else None,
+            time_hint=query.get("time"),
+        )
+        data_for_llm = {"location": location_info, "traveller_advisory": advisory}
+        try:
+            response_text = await generate_mode_aware_response(data_for_llm)
+        except Exception:
+            response_text = format_traveller_advisory(advisory)
+
+        update_chat_context(response_text, query, location_info)
+        await save_assistant_response(response_text, selected_tool)
+        return {
+            **mode_metadata, "message": request.message, "understanding": query,
+            "tool": tool_choice, "location": location_info,
+            "weather_used": {"current": current_weather, "forecast": forecast, "hourly_forecast": target_hourly},
+            "official_warnings": matching_alerts,
+            "official_warning_status": "available" if cached_imd is not None else "unavailable",
+            "traveller_advisory": advisory, "response": response_text,
         }
 
     # ========================================================

@@ -9,6 +9,21 @@ from app.services.cache_service import get_or_load
 GEOCODING_URL = "https://geocoding-api.open-meteo.com/v1/search"
 LOCATION_TTL = int(os.getenv("OPEN_METEO_LOCATION_CACHE_TTL", "86400"))
 
+# Open-Meteo's broad "Goa" lookup currently omits Goa, India and returns
+# unrelated places such as Genoa. Keep this narrowly scoped canonical alias in
+# the existing resolver rather than allowing a weather request to silently use
+# another country. Coordinates represent Panaji, the state capital.
+INDIA_LOCATION_ALIASES = {
+    "goa": {
+        "name": "Goa",
+        "country": "India",
+        "country_code": "IN",
+        "admin1": "Goa",
+        "latitude": 15.4909,
+        "longitude": 73.8278,
+    },
+}
+
 
 def normalize_location_name(name: str | None) -> str | None:
     """
@@ -118,5 +133,10 @@ async def search_location(name: str):
 
     if india_results:
         return india_results
+
+    # Only use a canonical Indian alias when the provider supplied no Indian
+    # candidate at all. The normal provider-backed resolution remains primary.
+    if normalized_name in INDIA_LOCATION_ALIASES:
+        return [INDIA_LOCATION_ALIASES[normalized_name]]
 
     return results
