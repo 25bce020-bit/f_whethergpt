@@ -43,6 +43,7 @@ from app.services.context_service import (
     get_context,
     update_context,
     clear_context,
+    relevant_context,
 )
 from app.services.imd_cap_service import (
     get_imd_cap_notifications,
@@ -714,6 +715,7 @@ async def chat(request: ChatRequest):
         "display_mode": mode_resolution.display_mode.value,
     }
     farmer_details = extract_farmer_context(request.message)
+    request_context = relevant_context(context, mode_resolution.active_mode.value)
 
     def with_mode_metadata(payload: dict) -> dict:
         return {**payload, **mode_metadata}
@@ -733,6 +735,11 @@ async def chat(request: ChatRequest):
             last_active_mode=mode_resolution.active_mode.value,
             crop=farmer_details.get("crop"),
             growth_stage=farmer_details.get("growth_stage"),
+            destination=(query.get("location") if mode_resolution.active_mode is WeatherMode.TRAVELLER else None),
+            travel_time=(query.get("time") if mode_resolution.active_mode is WeatherMode.TRAVELLER and query.get("time") not in (None, "unspecified") else None),
+            research_location=(query.get("location") if mode_resolution.active_mode is WeatherMode.RESEARCHER else None),
+            research_time=(query.get("time") if mode_resolution.active_mode is WeatherMode.RESEARCHER and query.get("time") not in (None, "unspecified") else None),
+            research_tool=(tool_choice.get("tool") if mode_resolution.active_mode is WeatherMode.RESEARCHER else None),
         )
 
     async def generate_mode_aware_response(weather_data: dict) -> str:
@@ -872,7 +879,7 @@ async def chat(request: ChatRequest):
     try:
             query = await understand_with_llm(
         request.message,
-        context,
+        request_context,
     )
 
     except Exception:
@@ -908,14 +915,14 @@ async def chat(request: ChatRequest):
     # result and fall back to the remembered session location when needed.
     if explicit_location:
         query["location"] = explicit_location
-    elif not query.get("location") and context.get("location"):
-        query["location"] = context.get("location")
+    elif not query.get("location") and request_context.get("location"):
+        query["location"] = request_context.get("location")
 
     if (
         query.get("intent") not in {"conversation", "unrelated", "unknown"}
         and not query.get("location")
     ):
-        previous_location = context.get("location")
+        previous_location = request_context.get("location")
 
         if previous_location:
             query["location"] = previous_location
@@ -937,7 +944,7 @@ async def chat(request: ChatRequest):
     try:
         tool_choice = await choose_weather_tool(
     request.message,
-    context,
+    request_context,
 )
 
     except Exception:

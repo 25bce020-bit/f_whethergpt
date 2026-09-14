@@ -9,6 +9,41 @@ conversation_store: Dict[str, Dict[str, Any]] = {}
 MAX_HISTORY = 6
 
 
+def relevant_context(context: Dict[str, Any], active_mode: str) -> Dict[str, Any]:
+    """Return only the session facts that may inform this request.
+
+    This is deliberately a small, deterministic projection rather than a profile
+    dump.  It is safe to pass to the LLM because every value originated in this
+    session and was explicitly captured by the backend.
+    """
+    general = {
+        key: context.get(key)
+        for key in ("location", "country", "state", "last_intent", "last_time")
+    }
+    if active_mode == "farmer":
+        return {**general, "crop": context.get("crop"), "growth_stage": context.get("growth_stage")}
+    if active_mode == "traveller":
+        return {
+            "destination": context.get("destination"),
+            "travel_time": context.get("travel_time"),
+            # Location is included only as a fallback for sessions created before
+            # destination context, not as unrelated farmer/researcher state.
+            "location": context.get("destination") or context.get("location"),
+            "last_intent": context.get("last_intent"),
+            "last_time": context.get("last_time"),
+        }
+    if active_mode == "researcher":
+        return {
+            "location": context.get("research_location") or context.get("location"),
+            "research_location": context.get("research_location"),
+            "research_time": context.get("research_time"),
+            "research_tool": context.get("research_tool"),
+            "last_intent": context.get("last_intent"),
+            "last_time": context.get("last_time"),
+        }
+    return general
+
+
 def get_context(session_id: str) -> Dict[str, Any]:
     """
     Get conversation context for a session.
@@ -25,6 +60,11 @@ def get_context(session_id: str) -> Dict[str, Any]:
             "last_active_mode": "normal",
             "crop": None,
             "growth_stage": None,
+            "destination": None,
+            "travel_time": None,
+            "research_location": None,
+            "research_time": None,
+            "research_tool": None,
             "history": [],
         }
 
@@ -41,6 +81,11 @@ def update_context(
     last_active_mode: str | None = None,
     crop: str | None = None,
     growth_stage: str | None = None,
+    destination: str | None = None,
+    travel_time: str | None = None,
+    research_location: str | None = None,
+    research_time: str | None = None,
+    research_tool: str | None = None,
 ):
     """
     Update conversation context after a successful request.
@@ -73,6 +118,17 @@ def update_context(
 
     if growth_stage is not None:
         context["growth_stage"] = growth_stage
+
+    if destination is not None:
+        context["destination"] = destination
+    if travel_time is not None:
+        context["travel_time"] = travel_time
+    if research_location is not None:
+        context["research_location"] = research_location
+    if research_time is not None:
+        context["research_time"] = research_time
+    if research_tool is not None:
+        context["research_tool"] = research_tool
 
     # Store conversation history
     context["history"].append(

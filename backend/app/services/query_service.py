@@ -156,6 +156,7 @@ def understand_query(message: str) -> dict:
 
         if match:
             candidate = match.group(1).strip()
+            candidate = re.sub(r"\s+instead$", "", candidate, flags=re.IGNORECASE)
 
             # Reuse the same normalization used by the LLM path.
             from app.services.location_service import normalize_location_name

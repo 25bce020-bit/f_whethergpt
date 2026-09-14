@@ -116,6 +116,9 @@ TRAVELLER_FOLLOW_UP_SIGNALS = re.compile(
     r"\b(pack(?:ing)?|raincoat|umbrella|outdoor activit(?:y|ies)|"
     r"carry|departure)\b"
 )
+RESEARCHER_FOLLOW_UP_SIGNALS = re.compile(
+    r"\b(model|agree(?:s|ment)?|disagree(?:ment)?|comparison|forecast confidence)\b"
+)
 
 
 def _recent_user_messages(context: dict | None) -> str:
@@ -153,6 +156,8 @@ def detect_automatic_mode(message: str, context: dict | None = None) -> WeatherM
         return WeatherMode.FARMER
     if TRAVELLER_SIGNALS.search(history) and TRAVELLER_FOLLOW_UP_SIGNALS.search(text):
         return WeatherMode.TRAVELLER
+    if context and context.get("research_tool") and RESEARCHER_FOLLOW_UP_SIGNALS.search(text):
+        return WeatherMode.RESEARCHER
     return WeatherMode.NORMAL
 
 
