@@ -91,6 +91,14 @@ from app.services.language_service import (
     extract_location_hint,
     resolve_response_language,
 )
+from app.services.gis_service import (
+    current_weather_map,
+    forecast_map,
+    geographic_point,
+    hourly_map,
+    validate_bounds,
+    warning_map_alert,
+)
 
 from app.services.advisory_service import (
     generate_weather_advisories,
@@ -420,6 +428,95 @@ async def official_warnings(
 # ============================================================
 # LOCATION SEARCH
 # ============================================================
+
+async def _resolve_gis_point(
+    name: str | None,
+    latitude: float | None,
+    longitude: float | None,
+):
+    """Resolve one GIS point with explicit coordinates taking priority."""
+    if (latitude is None) != (longitude is None):
+        raise HTTPException(status_code=422, detail="Provide both latitude and longitude.")
+    try:
+        if latitude is not None and longitude is not None:
+            return geographic_point(latitude=latitude, longitude=longitude)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    if not name:
+        raise HTTPException(status_code=422, detail="Provide a location name or both latitude and longitude.")
+    locations = await search_location(name)
+    if not locations:
+        raise HTTPException(status_code=404, detail="Location was not found.")
+    try:
+        return geographic_point(locations[0])
+    except ValueError as exc:
+        raise HTTPException(status_code=502, detail="Resolved location had invalid coordinates.") from exc
+
+
+@app.get("/gis/location")
+async def gis_location_search(
+    query: str = Query(..., min_length=2, description="City or place name"),
+):
+    point = await _resolve_gis_point(query, None, None)
+    return point.model_dump()
+
+
+@app.get("/gis/weather/current")
+async def gis_current_weather(
+    name: str | None = Query(None, min_length=2, description="City or place name"),
+    latitude: float | None = Query(None, description="Latitude in decimal degrees"),
+    longitude: float | None = Query(None, description="Longitude in decimal degrees"),
+):
+    point = await _resolve_gis_point(name, latitude, longitude)
+    weather = format_current_weather(await get_current_weather(point.latitude, point.longitude))
+    return current_weather_map(point, weather)
+
+
+@app.get("/gis/weather/forecast")
+async def gis_weather_forecast(
+    name: str | None = Query(None, min_length=2, description="City or place name"),
+    latitude: float | None = Query(None, description="Latitude in decimal degrees"),
+    longitude: float | None = Query(None, description="Longitude in decimal degrees"),
+):
+    point = await _resolve_gis_point(name, latitude, longitude)
+    forecast = format_forecast(await get_forecast(point.latitude, point.longitude))
+    return forecast_map(point, forecast)
+
+
+@app.get("/gis/weather/hourly")
+async def gis_weather_hourly(
+    name: str | None = Query(None, min_length=2, description="City or place name"),
+    latitude: float | None = Query(None, description="Latitude in decimal degrees"),
+    longitude: float | None = Query(None, description="Longitude in decimal degrees"),
+):
+    point = await _resolve_gis_point(name, latitude, longitude)
+    hourly = format_hourly_forecast(await get_hourly_forecast(point.latitude, point.longitude))
+    return hourly_map(point, hourly)
+
+
+@app.get("/gis/warnings")
+async def gis_official_warnings():
+    raw = await get_imd_cap_notifications()
+    alerts = normalize_imd_cap_notifications(raw)
+    return {
+        "source": "India Meteorological Department",
+        "official": True,
+        "alerts": [warning_map_alert(alert) for alert in alerts],
+    }
+
+
+@app.get("/gis/viewport")
+async def gis_viewport(
+    north: float = Query(...),
+    south: float = Query(...),
+    east: float = Query(...),
+    west: float = Query(...),
+):
+    try:
+        return {"bounds": validate_bounds(north, south, east, west).model_dump()}
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
 
 @app.get("/locations/search")
 async def location_search(
