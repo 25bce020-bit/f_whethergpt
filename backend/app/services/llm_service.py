@@ -4,6 +4,7 @@ from dotenv import load_dotenv
 from groq import AsyncGroq
 
 from app.services.weather_tools import WEATHER_TOOLS
+from app.services.language_service import get_language_instruction
 
 # Load environment variables
 load_dotenv()
@@ -40,6 +41,7 @@ async def ask_llm(message: str) -> str:
 async def choose_weather_tool(
     message: str,
     context: dict | None = None,
+    language: str = "en",
 ) -> dict:
 
     context = context or {}
@@ -49,6 +51,9 @@ async def choose_weather_tool(
 
     prompt = f"""
 You are the tool-selection system for WeatherGPT.
+
+The user may write in an Indian language or a mixed-language form. Understand
+the meaning, but keep tool names language-independent. {get_language_instruction(language)}
 
 Choose exactly ONE tool that should handle the user's CURRENT question.
 
@@ -189,6 +194,7 @@ User question:
 async def understand_with_llm(
     message: str,
     context: dict | None = None,
+    language: str = "en",
 ) -> dict:
 
     context = context or {}
@@ -206,6 +212,11 @@ async def understand_with_llm(
 
     prompt = f"""
 You are the query understanding system for WeatherGPT.
+
+The user language is {get_language_instruction(language)} Understand Hindi,
+Gujarati, Marathi, Bengali, Tamil, Telugu, Kannada, Malayalam, Punjabi and
+Odia (including practical mixed-language input). Return canonical English
+intent, location, and time values; do not translate city names into query glue.
 
 Analyze the user's current weather question using both
 the current message and the previous conversation context.
@@ -345,6 +356,7 @@ Current user message:
 async def generate_weather_response(
     user_message: str,
     weather_data: dict,
+    language: str = "en",
 ) -> str:
     """
     Generate a natural-language response using the weather data.
@@ -354,6 +366,9 @@ async def generate_weather_response(
 You are WeatherGPT, an intelligent weather assistant.
 
 Answer the user's question using ONLY the weather data provided below.
+
+{get_language_instruction(language)} Preserve all supplied values, the
+official status/severity of any warning, and do not invent facts while translating.
 
 User question:
 {user_message}

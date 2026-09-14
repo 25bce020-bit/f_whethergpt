@@ -21,6 +21,7 @@ def get_context(session_id: str) -> Dict[str, Any]:
             "state": None,
             "last_intent": None,
             "last_time": None,
+            "language": None,
             "history": [],
         }
 
@@ -33,6 +34,7 @@ def update_context(
     assistant_response: str,
     query: dict,
     location: dict | None = None,
+    language: str | None = None,
 ):
     """
     Update conversation context after a successful request.
@@ -52,6 +54,9 @@ def update_context(
 
     if query.get("time"):
         context["last_time"] = query.get("time")
+
+    if language or query.get("language"):
+        context["language"] = language or query.get("language")
 
     # Store conversation history
     context["history"].append(
