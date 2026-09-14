@@ -23,6 +23,8 @@ def get_context(session_id: str) -> Dict[str, Any]:
             "last_time": None,
             "selected_mode": "normal",
             "last_active_mode": "normal",
+            "crop": None,
+            "growth_stage": None,
             "history": [],
         }
 
@@ -37,6 +39,8 @@ def update_context(
     location: dict | None = None,
     selected_mode: str | None = None,
     last_active_mode: str | None = None,
+    crop: str | None = None,
+    growth_stage: str | None = None,
 ):
     """
     Update conversation context after a successful request.
@@ -62,6 +66,13 @@ def update_context(
 
     if last_active_mode is not None:
         context["last_active_mode"] = last_active_mode
+
+    # Farmer details are intentionally session-scoped; they are not a user profile.
+    if crop is not None:
+        context["crop"] = crop
+
+    if growth_stage is not None:
+        context["growth_stage"] = growth_stage
 
     # Store conversation history
     context["history"].append(

@@ -100,6 +100,17 @@ from app.services.conversation_service import (
     UNRELATED_RESPONSE,
     get_conversation_response,
 )
+from app.services.farmer_service import (
+    build_farmer_advisory,
+    extract_farmer_context,
+    format_farmer_advisory,
+    is_farmer_context_statement,
+)
+from app.services.researcher_service import (
+    build_researcher_analysis,
+    choose_researcher_tool,
+    format_researcher_analysis,
+)
 
 
 app = FastAPI(
@@ -698,6 +709,7 @@ async def chat(request: ChatRequest):
         "active_mode": mode_resolution.active_mode.value,
         "display_mode": mode_resolution.display_mode.value,
     }
+    farmer_details = extract_farmer_context(request.message)
 
     def with_mode_metadata(payload: dict) -> dict:
         return {**payload, **mode_metadata}
@@ -715,9 +727,28 @@ async def chat(request: ChatRequest):
             location,
             selected_mode=mode_resolution.selected_mode.value,
             last_active_mode=mode_resolution.active_mode.value,
+            crop=farmer_details.get("crop"),
+            growth_stage=farmer_details.get("growth_stage"),
         )
 
     async def generate_mode_aware_response(weather_data: dict) -> str:
+        if mode_resolution.active_mode is WeatherMode.RESEARCHER:
+            analysis = build_researcher_analysis(
+                weather_data,
+                tool=tool_choice.get("tool"),
+            )
+            weather_data = {
+                **weather_data,
+                "researcher_analysis": analysis,
+            }
+            try:
+                return await generate_weather_response(
+                    request.message,
+                    weather_data,
+                    mode_persona=mode_configuration.persona_prompt,
+                )
+            except Exception:
+                return format_researcher_analysis(analysis)
         return await generate_weather_response(
             request.message,
             weather_data,
@@ -767,6 +798,33 @@ async def chat(request: ChatRequest):
             "response": response_text,
         }
 
+    # A farmer can establish crop/stage context without a weather lookup. This is
+    # deliberately session-only and does not create permanent personalization.
+    if (
+        mode_resolution.active_mode is WeatherMode.FARMER
+        and is_farmer_context_statement(request.message, farmer_details)
+    ):
+        remembered_crop = farmer_details.get("crop") or context.get("crop")
+        remembered_stage = farmer_details.get("growth_stage") or context.get("growth_stage")
+        details = []
+        if farmer_details.get("crop"):
+            details.append(f"crop: {farmer_details['crop']}")
+        if farmer_details.get("growth_stage"):
+            details.append(f"growth stage: {farmer_details['growth_stage']}")
+        response_text = "Got it. I will use " + " and ".join(details) + " as session context for farmer weather advice."
+        query = {"intent": "farmer_context", "location": context.get("location"), "time": "unspecified", "activity": None}
+        tool_choice = {"tool": "farmer_context", "reason": "Recorded explicit farmer session context."}
+        update_chat_context(response_text, query)
+        await save_assistant_response(response_text, "farmer_context")
+        return {
+            **mode_metadata,
+            "message": request.message,
+            "understanding": query,
+            "tool": tool_choice,
+            "farmer_context": {"crop": remembered_crop, "growth_stage": remembered_stage},
+            "response": response_text,
+        }
+
     # --------------------------------------------------------
     # STEP 1: Understand query using Groq
     # --------------------------------------------------------
@@ -780,11 +838,22 @@ async def chat(request: ChatRequest):
     except Exception:
         # Fallback to existing rule-based understanding
         query = understand_query(request.message)
-    if query.get("intent") not in {"conversation", "unrelated", "unknown"} and not query.get("location"):
+    if (
+        query.get("intent") not in {"conversation", "unrelated", "unknown"}
+        and not query.get("location")
+    ):
         previous_location = context.get("location")
 
         if previous_location:
             query["location"] = previous_location
+    if (
+        mode_resolution.active_mode is WeatherMode.RESEARCHER
+        and query.get("intent") == "historical"
+        and query.get("time") == "unspecified"
+    ):
+        # The existing historical service works with bounded periods. A researcher
+        # asking for general/recent history receives the supported recent window.
+        query["time"] = "last_few_days"
     intent = query.get("intent")
     location_name = query.get("location")
 
@@ -805,6 +874,14 @@ async def chat(request: ChatRequest):
         }
 
     selected_tool = tool_choice.get("tool")
+
+    if mode_resolution.active_mode is WeatherMode.RESEARCHER:
+        selected_tool = choose_researcher_tool(request.message) or selected_tool
+
+    # Farmer Mode reuses the existing weather and IMD services, then runs the
+    # deterministic farmer layer. No separate weather tool/client is introduced.
+    if mode_resolution.active_mode is WeatherMode.FARMER:
+        selected_tool = "farmer_advisory"
 
     # --------------------------------------------------------
     # STEP 3: Normalize tool name
@@ -835,7 +912,10 @@ async def chat(request: ChatRequest):
     # Update returned tool information with the actual tool
     tool_choice["tool"] = selected_tool
 
-    if query.get("intent") in {"unrelated", "unknown"} or selected_tool == "conversation":
+    if (
+        mode_resolution.active_mode is not WeatherMode.FARMER
+        and (query.get("intent") in {"unrelated", "unknown"} or selected_tool == "conversation")
+    ):
         response_text = UNRELATED_RESPONSE
 
         if selected_tool == "conversation":
@@ -914,6 +994,66 @@ async def chat(request: ChatRequest):
         "country": location.get("country"),
         "state": location.get("admin1"),
     }
+
+    # ========================================================
+    # TOOL: FARMER INTELLIGENCE (Sprint 16)
+    # ========================================================
+    if selected_tool == "farmer_advisory":
+        current_data = await get_current_weather(latitude, longitude)
+        current_weather = format_current_weather(current_data)
+        forecast_data = await get_forecast(latitude, longitude)
+        forecast = format_forecast(forecast_data)
+        hourly_data = await get_hourly_forecast(latitude, longitude)
+        hourly_forecast = format_hourly_forecast(hourly_data)
+
+        # Keep the hourly evidence aligned with a selected daily forecast day.
+        target_hourly = hourly_forecast
+        if query.get("time") == "tomorrow":
+            tomorrow_prefix = (today_india() + timedelta(days=1)).isoformat()
+            target_hourly = [hour for hour in hourly_forecast if str(hour.get("time", "")).startswith(tomorrow_prefix)]
+
+        try:
+            cached_imd = await get_cached_imd_alerts(refresh_if_missing=True)
+        except Exception:
+            # IMD availability must not prevent a weather-based advisory; do not
+            # imply that no official warning exists when its feed is unavailable.
+            cached_imd = None
+        all_alerts = cached_imd["data"].get("alerts", []) if cached_imd else []
+        matching_alerts = filter_alerts_for_location(
+            all_alerts, latitude, longitude, location_info.get("name"), location_info.get("state")
+        )
+        advisory = build_farmer_advisory(
+            crop=farmer_details.get("crop") or context.get("crop"),
+            growth_stage=farmer_details.get("growth_stage") or context.get("growth_stage"),
+            current_weather=current_weather,
+            forecast=forecast,
+            hourly_forecast=target_hourly,
+            imd_warnings=matching_alerts if cached_imd is not None else None,
+            time_hint=query.get("time"),
+        )
+        data_for_llm = {
+            "location": location_info,
+            "farmer_advisory": advisory,
+        }
+        try:
+            response_text = await generate_mode_aware_response(data_for_llm)
+        except Exception:
+            response_text = format_farmer_advisory(advisory)
+
+        update_chat_context(response_text, query, location_info)
+        await save_assistant_response(response_text, selected_tool)
+        return {
+            **mode_metadata,
+            "message": request.message,
+            "understanding": query,
+            "tool": tool_choice,
+            "location": location_info,
+            "weather_used": {"current": current_weather, "forecast": forecast, "hourly_forecast": target_hourly},
+            "official_warnings": matching_alerts,
+            "official_warning_status": "available" if cached_imd is not None else "unavailable",
+            "farmer_advisory": advisory,
+            "response": response_text,
+        }
 
     # ========================================================
     # TOOL: CURRENT WEATHER

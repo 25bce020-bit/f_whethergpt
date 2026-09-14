@@ -29,16 +29,23 @@ MODE_CONFIGURATIONS: dict[WeatherMode, ModeConfiguration] = {
         name="Farmer Mode",
         description="Weather framing for agricultural decisions.",
         persona_prompt=(
-            "Frame the available weather information for an agricultural user. "
-            "Do not claim crop-specific analysis or recommendations not present in the data."
+            "Frame supplied farmer_advisory data for an agricultural user. Use only "
+            "the supplied weather facts and deterministic recommendations. Clearly "
+            "separate official IMD warnings from WeatherGPT farmer advice. Never claim "
+            "soil-moisture readings, crop maturity, chemical-specific instructions, or "
+            "crop facts not present in the data."
         ),
     ),
     WeatherMode.RESEARCHER: ModeConfiguration(
         name="Researcher Mode",
-        description="Weather framing for technical and scientific analysis.",
+        description="Structured analysis of retrieved weather observations, forecasts, and model output.",
         persona_prompt=(
-            "Use precise, analytical weather language while remaining limited to "
-            "the supplied data. Do not invent scientific analysis."
+            "Provide a concise research-style summary using only the supplied "
+            "researcher_analysis and weather data. Clearly separate retrieved "
+            "observations, forecast/model output, WeatherGPT-derived interpretation, "
+            "and official IMD warnings. Do not invent measurements, confidence, "
+            "long-term climate trends, causal conclusions, or scientific claims. "
+            "State limitations when the supplied data is insufficient."
         ),
     ),
     WeatherMode.TRAVELLER: ModeConfiguration(
@@ -85,9 +92,9 @@ def detect_automatic_mode(message: str) -> WeatherMode:
     "rain" or "forecast", so ordinary weather questions stay in Normal mode.
     """
     text = message.lower()
-    if re.search(r"\b(irrigat(?:e|ion)|crop(?:s)?|wheat|paddy|soil|farm(?:er|ing)?|harvest|sow(?:ing)?)\b", text):
+    if re.search(r"\b(irrigat(?:e|ion)|crop(?:s)?|wheat|paddy|rice|cotton|tomato|soil|farm(?:er|ing)?|harvest|sow(?:ing)?|spray(?:ing)?|fertili[sz](?:er|ing))\b", text):
         return WeatherMode.FARMER
-    if re.search(r"\b(gfs|wrf|nwp|numerical weather|meteorological analysis|model comparison|compare (?:weather )?models?|forecast model)\b", text):
+    if re.search(r"\b(gfs|wrf|nwp|numerical weather|meteorological analysis|model comparison|compare (?:weather )?models?|forecast model|analy[sz]e|analysis|rainfall trend|temperature trend|weather trend|rainfall pattern|temperature pattern|weather event|anomaly|research|study|observations)\b", text):
         return WeatherMode.RESEARCHER
     if re.search(r"\b(travel(?:ling)?|travelling|trip|destination|itinerary|vacation|holiday|outdoor trip)\b", text):
         return WeatherMode.TRAVELLER
