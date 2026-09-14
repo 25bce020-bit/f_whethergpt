@@ -706,7 +706,7 @@ async def chat(request: ChatRequest):
         context.get("selected_mode"),
         was_explicitly_supplied="selected_mode" in request.model_fields_set,
     )
-    mode_resolution = resolve_mode(request.message, selected_mode)
+    mode_resolution = resolve_mode(request.message, selected_mode, context)
     mode_configuration = get_mode_configuration(mode_resolution.active_mode)
     mode_metadata = {
         "selected_mode": mode_resolution.selected_mode.value,
@@ -812,6 +812,15 @@ async def chat(request: ChatRequest):
             "response": response_text,
         }
 
+    # Canonical location resolution for the current request.
+    # Explicit locations in the current message take priority over
+    # remembered session location. This is resolved before any
+    # mode-specific early return so context-only messages can also
+    # persist a location.
+    rule_query = understand_query(request.message)
+    explicit_location = rule_query.get("location")
+    resolved_location_name = explicit_location or context.get("location")
+
     # A farmer can establish crop/stage context without a weather lookup. This is
     # deliberately session-only and does not create permanent personalization.
     if (
@@ -826,9 +835,26 @@ async def chat(request: ChatRequest):
         if farmer_details.get("growth_stage"):
             details.append(f"growth stage: {farmer_details['growth_stage']}")
         response_text = "Got it. I will use " + " and ".join(details) + " as session context for farmer weather advice."
-        query = {"intent": "farmer_context", "location": context.get("location"), "time": "unspecified", "activity": None}
-        tool_choice = {"tool": "farmer_context", "reason": "Recorded explicit farmer session context."}
-        update_chat_context(response_text, query)
+        query = {
+            "intent": "farmer_context",
+            "location": resolved_location_name,
+            "time": "unspecified",
+            "activity": None,
+        }
+        tool_choice = {
+            "tool": "farmer_context",
+            "reason": "Recorded explicit farmer session context.",
+        }
+        context_location = (
+            {"name": resolved_location_name}
+            if resolved_location_name
+            else None
+        )
+        update_chat_context(
+            response_text,
+            query,
+            context_location,
+        )
         await save_assistant_response(response_text, "farmer_context")
         return {
             **mode_metadata,
@@ -856,15 +882,35 @@ async def chat(request: ChatRequest):
     # extractor returns a phrase such as "Goa tomorrow". This only applies the
     # already-established rule parser as a narrow Traveller-mode correction.
     if mode_resolution.active_mode is WeatherMode.TRAVELLER:
-        rule_query = understand_query(request.message)
         extracted_location = query.get("location")
-        if rule_query.get("location") and (
+        if explicit_location and (
             not extracted_location
-            or any(phrase in str(extracted_location).lower() for phrase in ("tomorrow", "today", "day after tomorrow", "next week", "next few days"))
+            or any(
+                phrase in str(extracted_location).lower()
+                for phrase in (
+                    "tomorrow",
+                    "today",
+                    "day after tomorrow",
+                    "next week",
+                    "next few days",
+                )
+            )
         ):
-            query["location"] = rule_query["location"]
-        if query.get("time") in (None, "unspecified") and rule_query.get("time") != "unspecified":
+            query["location"] = explicit_location
+        if (
+            query.get("time") in (None, "unspecified")
+            and rule_query.get("time") != "unspecified"
+        ):
             query["time"] = rule_query["time"]
+
+    # Deterministic location extraction is authoritative when the current
+    # message contains an explicit location. Otherwise, preserve the LLM
+    # result and fall back to the remembered session location when needed.
+    if explicit_location:
+        query["location"] = explicit_location
+    elif not query.get("location") and context.get("location"):
+        query["location"] = context.get("location")
+
     if (
         query.get("intent") not in {"conversation", "unrelated", "unknown"}
         and not query.get("location")

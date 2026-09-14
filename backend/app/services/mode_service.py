@@ -89,18 +89,69 @@ def resolve_selected_mode(
     return WeatherMode.NORMAL
 
 
-def detect_automatic_mode(message: str) -> WeatherMode:
-    """Conservatively identify clearly specialized weather contexts.
+FARMER_ACTION_SIGNALS = re.compile(
+    r"\b(irrigat(?:e|ion)|sow(?:ing)?|fertili[sz](?:e|er|ing)|pesticide|"
+    r"spray(?:ing)?|harvest(?:ing)?|growth stage|field|farm(?:er|ing)?|"
+    r"agricultur(?:e|al))\b"
+)
+FARMER_CROP_SIGNALS = re.compile(
+    r"\b(crop(?:s)?|wheat|rice|paddy|cotton|tomato|maize|soybean|sugarcane)\b"
+)
+RESEARCHER_SIGNALS = re.compile(
+    r"\b(gfs|open-meteo|wrf|nwp|numerical weather prediction|historical weather|"
+    r"weather history|model comparison|compare (?:weather )?models?|forecast model|"
+    r"model agreement|model disagreement|analy[sz]e|analysis|rainfall trend|"
+    r"temperature trend|weather trend|research|study|observations)\b"
+)
+TRAVELLER_SIGNALS = re.compile(
+    r"\b(travel(?:ling)?|traveller|traveler|trip|vacation|holiday|journey|"
+    r"destination|sightseeing|tourism|tourist|outdoor activit(?:y|ies)|packing|"
+    r"pack|raincoat)\b"
+)
+FARMER_FOLLOW_UP_SIGNALS = re.compile(
+    r"\b(irrigat(?:e|ion)|sow(?:ing)?|fertili[sz](?:e|er|ing)|pesticide|"
+    r"spray(?:ing)?|harvest(?:ing)?|field)\b"
+)
+TRAVELLER_FOLLOW_UP_SIGNALS = re.compile(
+    r"\b(pack(?:ing)?|raincoat|umbrella|outdoor activit(?:y|ies)|"
+    r"carry|departure)\b"
+)
 
-    This deliberately uses explicit context signals rather than broad words such as
-    "rain" or "forecast", so ordinary weather questions stay in Normal mode.
+
+def _recent_user_messages(context: dict | None) -> str:
+    """Return only the small, existing session window used for routing context."""
+    if not context:
+        return ""
+    return " ".join(
+        str(item.get("user", "")) for item in context.get("history", [])[-6:]
+        if isinstance(item, dict)
+    ).lower()
+
+
+def detect_automatic_mode(message: str, context: dict | None = None) -> WeatherMode:
+    """Conservatively identify a specialized request without changing selection.
+
+    A named destination and generic weather wording remain Normal.  Session context
+    is used only for narrow follow-ups (for example, raincoat after a stated trip),
+    never as a permanent preference or cross-session profile.
     """
     text = message.lower()
-    if re.search(r"\b(irrigat(?:e|ion)|crop(?:s)?|wheat|paddy|rice|cotton|tomato|soil|farm(?:er|ing)?|harvest|sow(?:ing)?|spray(?:ing)?|fertili[sz](?:er|ing))\b", text):
+    if FARMER_ACTION_SIGNALS.search(text):
         return WeatherMode.FARMER
-    if re.search(r"\b(gfs|wrf|nwp|numerical weather|meteorological analysis|model comparison|compare (?:weather )?models?|forecast model|analy[sz]e|analysis|rainfall trend|temperature trend|weather trend|rainfall pattern|temperature pattern|weather event|anomaly|research|study|observations)\b", text):
+    # An explicit crop statement establishes the existing short-lived farmer context.
+    if FARMER_CROP_SIGNALS.search(text) and re.search(r"\b(grow(?:ing)?|plant(?:ing)?)\b", text):
+        return WeatherMode.FARMER
+    if RESEARCHER_SIGNALS.search(text):
         return WeatherMode.RESEARCHER
-    if re.search(r"\b(travel(?:ling)?|travelling|trip|destination|itinerary|vacation|holiday|outdoor trip)\b", text):
+    if TRAVELLER_SIGNALS.search(text):
+        return WeatherMode.TRAVELLER
+
+    history = _recent_user_messages(context)
+    if context and context.get("crop") and FARMER_FOLLOW_UP_SIGNALS.search(text):
+        return WeatherMode.FARMER
+    if FARMER_CROP_SIGNALS.search(history) and FARMER_FOLLOW_UP_SIGNALS.search(text):
+        return WeatherMode.FARMER
+    if TRAVELLER_SIGNALS.search(history) and TRAVELLER_FOLLOW_UP_SIGNALS.search(text):
         return WeatherMode.TRAVELLER
     return WeatherMode.NORMAL
 
@@ -108,13 +159,24 @@ def detect_automatic_mode(message: str) -> WeatherMode:
 def resolve_mode(
     message: str,
     selected_mode: WeatherMode | str,
+    context: dict | None = None,
 ) -> ModeResolution:
     """Resolve active mode without ever mutating the selected/display mode."""
     selected = WeatherMode(selected_mode)
-    active = detect_automatic_mode(message) if selected is WeatherMode.NORMAL else selected
+    # A user-selected specialist mode is authoritative.  Keep this early return
+    # ahead of every automatic/context classifier so none can override it.
+    if selected is not WeatherMode.NORMAL:
+        return ModeResolution(
+            selected_mode=selected,
+            active_mode=selected,
+            display_mode=selected,
+            routing="manual",
+        )
+
+    active = detect_automatic_mode(message, context)
     return ModeResolution(
         selected_mode=selected,
         active_mode=active,
         display_mode=selected,
-        routing="automatic" if selected is WeatherMode.NORMAL else "manual",
+        routing="automatic",
     )
