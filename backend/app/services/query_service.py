@@ -19,7 +19,7 @@ def understand_query(message: str) -> dict:
     ]):
         intent = "historical"
 
-    if any(phrase in text for phrase in [
+    elif any(phrase in text for phrase in [
         "average temperature",
         "average rainfall",
         "average weather",
@@ -116,23 +116,55 @@ def understand_query(message: str) -> dict:
 
     location = None
 
+    # First try to extract a location after common location prepositions.
+    #
+    # Stop at:
+    # - sentence punctuation
+    # - common time expressions
+    # - common question/action phrases
+    #
+    # This prevents cases like:
+    # "in Ahmedabad. Is tomorrow suitable?"
+    # from becoming:
+    # "ahmedabad. is tomorrow suitable"
     patterns = [
-        # "in Ahmedabad"
-        r"\bin\s+(.+?)(?=\s+(?:today|tomorrow|yesterday|now|currently|right now|day after tomorrow|next week|next few days|next 3 days|last week|last few days)\b|\s+for\s+(?:the\s+)?(?:next|last)\b|\?|$)",
+        r"\b(?:in|at|near|around|from|to|of)\s+"
+        r"(.+?)"
+        r"(?=\s*[.!?]"
+        r"|\s+(?:today|tomorrow|yesterday|now|currently|right now)\b"
+        r"|\s+(?:day after tomorrow|next week|next few days|next 3 days)\b"
+        r"|\s+(?:last week|last few days)\b"
+        r"|\s+(?:for the next|for the last)\b"
+        r"|$)",
 
-        # "at Ahmedabad"
-        r"\bat\s+(.+?)(?=\s+(?:today|tomorrow|yesterday|now|currently|right now|day after tomorrow|next week|next few days|next 3 days|last week|last few days)\b|\s+for\s+(?:the\s+)?(?:next|last)\b|\?|$)",
+        r"\bfor\s+"
+        r"(.+?)"
+        r"(?=\s*[.!?]"
+        r"|\s+(?:today|tomorrow|yesterday|now|currently|right now)\b"
+        r"|\s+(?:day after tomorrow|next week|next few days|next 3 days)\b"
+        r"|\s+(?:last week|last few days)\b"
+        r"|$)",
 
-        # "for Ahmedabad"
-        r"\bfor\s+(.+?)(?=\s+(?:today|tomorrow|yesterday|now|currently|right now|day after tomorrow|next week|next few days|next 3 days|last week|last few days)\b|\?|$)",
+        # Research-style wording: "Analyze Ahmedabad weather tomorrow".
+        r"\b(?:analy[sz]e|compare|study)\s+"
+        r"([a-z][a-z .'-]*?)"
+        r"\s+(?:weather|forecast|climate|rainfall|temperature|history)\b",
     ]
 
     for pattern in patterns:
-        match = re.search(pattern, text)
+        match = re.search(pattern, text, flags=re.IGNORECASE)
 
         if match:
-            location = match.group(1).strip()
-            break
+            candidate = match.group(1).strip()
+            candidate = re.sub(r"\s+instead$", "", candidate, flags=re.IGNORECASE)
+
+            # Reuse the same normalization used by the LLM path.
+            from app.services.location_service import normalize_location_name
+
+            location = normalize_location_name(candidate)
+
+            if location:
+                break
     # ----------------------------------------
     # Return structured query
     # ----------------------------------------

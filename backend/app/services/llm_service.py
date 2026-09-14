@@ -1,5 +1,6 @@
 import os
 import json
+from app.services.location_service import normalize_location_name
 from dotenv import load_dotenv
 from groq import AsyncGroq
 
@@ -32,7 +33,8 @@ async def ask_llm(message: str) -> str:
                 "content": message
             }
         ],
-        temperature=0
+        temperature=0,
+        max_completion_tokens=800
     )
 
     return response.choices[0].message.content
@@ -174,6 +176,8 @@ Important:
   Use model_comparison instead.
 - Do NOT choose forecast when the user explicitly asks to COMPARE
   weather models. Use model_comparison instead.
+- For irrigation, spraying, sowing, harvesting, crop, or farm-advisory
+  questions, choose recommendation. Farmer Mode adds its deterministic guidance.
 
 Return ONLY valid JSON with exactly these fields:
 
@@ -351,12 +355,20 @@ Current user message:
 
     result = await ask_llm(prompt)
 
-    return json.loads(result)
+    parsed = json.loads(result)
+
+    # Normalize the LLM-extracted location before returning it.
+    parsed["location"] = normalize_location_name(
+        parsed.get("location")
+    )
+
+    return parsed
 
 async def generate_weather_response(
     user_message: str,
     weather_data: dict,
     language: str = "en",
+    mode_persona: str | None = None,
 ) -> str:
     """
     Generate a natural-language response using the weather data.
@@ -378,6 +390,8 @@ Weather data:
 
 Instructions:
 
+- Response mode persona: {mode_persona or "Provide clear, practical general weather guidance."}
+
 - Give a clear, natural and useful answer.
 - Do not invent weather information.
 - Do not mention internal tools, APIs, Python, JSON, or implementation details.
@@ -397,6 +411,14 @@ When responding to disaster or extreme-weather alerts:
 - Do not claim an official warning unless the data explicitly
   comes from an official warning source.
 - Distinguish between forecast-based risk and official alerts.
+- If farmer_advisory is supplied, treat it as the authoritative decision context:
+  do not add unsupported crop facts, soil-moisture claims, maturity claims, or
+  chemical-specific instructions. Label official IMD warnings separately from
+  WeatherGPT-derived farmer advice.
+- If researcher_analysis is supplied, use it as the authoritative analysis input.
+  Clearly distinguish retrieved observations, forecast/model output, official IMD
+  warnings, and WeatherGPT-derived interpretation. Do not infer long-term climate
+  conclusions from a short record or invent values, source metadata, or confidence.
 Return ONLY the final answer text.
 """
 

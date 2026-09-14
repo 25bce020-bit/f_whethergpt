@@ -43,6 +43,7 @@ from app.services.context_service import (
     get_context,
     update_context,
     clear_context,
+    relevant_context,
 )
 from app.services.imd_cap_service import (
     get_imd_cap_notifications,
@@ -103,9 +104,30 @@ from app.services.gis_service import (
 from app.services.advisory_service import (
     generate_weather_advisories,
 )
+from app.services.mode_service import (
+    WeatherMode,
+    get_mode_configuration,
+    resolve_mode,
+    resolve_selected_mode,
+)
 from app.services.conversation_service import (
     UNRELATED_RESPONSE,
     get_conversation_response,
+)
+from app.services.farmer_service import (
+    build_farmer_advisory,
+    extract_farmer_context,
+    format_farmer_advisory,
+    is_farmer_context_statement,
+)
+from app.services.researcher_service import (
+    build_researcher_analysis,
+    choose_researcher_tool,
+    format_researcher_analysis,
+)
+from app.services.traveller_service import (
+    build_traveller_advisory,
+    format_traveller_advisory,
 )
 from app.services.voice_service import (
     VoiceValidationError,
@@ -728,6 +750,7 @@ async def gfs_weather(
 class ChatRequest(BaseModel):
     message: str
     session_id: str = "default"
+    selected_mode: WeatherMode = WeatherMode.NORMAL
     language: str | None = None
 
 @app.delete("/chat/session/{session_id}")
@@ -786,11 +809,87 @@ async def process_chat_message(request: ChatRequest):
     # --------------------------------------------------------
 
     context = get_context(request.session_id)
+    selected_mode = resolve_selected_mode(
+        request.selected_mode,
+        context.get("selected_mode"),
+        was_explicitly_supplied="selected_mode" in request.model_fields_set,
+    )
+    mode_resolution = resolve_mode(request.message, selected_mode, context)
+    mode_configuration = get_mode_configuration(mode_resolution.active_mode)
+    mode_metadata = {
+        "selected_mode": mode_resolution.selected_mode.value,
+        "active_mode": mode_resolution.active_mode.value,
+        "display_mode": mode_resolution.display_mode.value,
+    }
     language = resolve_response_language(
         request.language,
         request.message,
         context.get("language"),
     )
+    farmer_details = extract_farmer_context(request.message)
+    request_context = relevant_context(context, mode_resolution.active_mode.value)
+
+    def with_mode_metadata(payload: dict) -> dict:
+        return {**payload, **mode_metadata}
+
+    def update_chat_context(
+        response_text: str,
+        query: dict,
+        location: dict | None = None,
+    ) -> None:
+        update_context(
+            request.session_id,
+            request.message,
+            response_text,
+            query,
+            location,
+            selected_mode=mode_resolution.selected_mode.value,
+            last_active_mode=mode_resolution.active_mode.value,
+            crop=farmer_details.get("crop"),
+            growth_stage=farmer_details.get("growth_stage"),
+            destination=(query.get("location") if mode_resolution.active_mode is WeatherMode.TRAVELLER else None),
+            travel_time=(query.get("time") if mode_resolution.active_mode is WeatherMode.TRAVELLER and query.get("time") not in (None, "unspecified") else None),
+            research_location=(query.get("location") if mode_resolution.active_mode is WeatherMode.RESEARCHER else None),
+            research_time=(query.get("time") if mode_resolution.active_mode is WeatherMode.RESEARCHER and query.get("time") not in (None, "unspecified") else None),
+            research_tool=(tool_choice.get("tool") if mode_resolution.active_mode is WeatherMode.RESEARCHER else None),
+        )
+
+    async def generate_mode_aware_response(weather_data: dict) -> str:
+        if mode_resolution.active_mode is WeatherMode.RESEARCHER:
+            analysis = build_researcher_analysis(
+                weather_data,
+                tool=tool_choice.get("tool"),
+            )
+            weather_data = {
+                **weather_data,
+                "researcher_analysis": analysis,
+            }
+            try:
+                return await generate_weather_response(
+                    request.message,
+                    weather_data,
+                    language,
+                    mode_persona=mode_configuration.persona_prompt,
+                )
+            except Exception:
+                return format_researcher_analysis(analysis)
+        if mode_resolution.active_mode is WeatherMode.TRAVELLER:
+            advisory = weather_data["traveller_advisory"]
+            try:
+                return await generate_weather_response(
+                    request.message,
+                    weather_data,
+                    language,
+                    mode_persona=mode_configuration.persona_prompt,
+                )
+            except Exception:
+                return format_traveller_advisory(advisory)
+        return await generate_weather_response(
+            request.message,
+            weather_data,
+            language,
+            mode_persona=mode_configuration.persona_prompt,
+        )
 
     await save_chat_message(
         session_id=request.session_id,
@@ -824,21 +923,69 @@ async def process_chat_message(request: ChatRequest):
             "reason": "Recognized casual conversation.",
         }
 
-        update_context(
-            request.session_id,
-            request.message,
-            response_text,
-            query,
-            language=language,
-        )
+        update_chat_context(response_text, query)
         await save_assistant_response(response_text, "conversation")
 
         return {
+            **mode_metadata,
             "message": request.message,
             "understanding": query,
             "tool": tool_choice,
             "response": response_text,
             "language": language,
+        }
+
+    # Canonical location resolution for the current request.
+    # Explicit locations in the current message take priority over
+    # remembered session location. This is resolved before any
+    # mode-specific early return so context-only messages can also
+    # persist a location.
+    rule_query = understand_query(request.message)
+    explicit_location = rule_query.get("location")
+    resolved_location_name = explicit_location or context.get("location")
+
+    # A farmer can establish crop/stage context without a weather lookup. This is
+    # deliberately session-only and does not create permanent personalization.
+    if (
+        mode_resolution.active_mode is WeatherMode.FARMER
+        and is_farmer_context_statement(request.message, farmer_details)
+    ):
+        remembered_crop = farmer_details.get("crop") or context.get("crop")
+        remembered_stage = farmer_details.get("growth_stage") or context.get("growth_stage")
+        details = []
+        if farmer_details.get("crop"):
+            details.append(f"crop: {farmer_details['crop']}")
+        if farmer_details.get("growth_stage"):
+            details.append(f"growth stage: {farmer_details['growth_stage']}")
+        response_text = "Got it. I will use " + " and ".join(details) + " as session context for farmer weather advice."
+        query = {
+            "intent": "farmer_context",
+            "location": resolved_location_name,
+            "time": "unspecified",
+            "activity": None,
+        }
+        tool_choice = {
+            "tool": "farmer_context",
+            "reason": "Recorded explicit farmer session context.",
+        }
+        context_location = (
+            {"name": resolved_location_name}
+            if resolved_location_name
+            else None
+        )
+        update_chat_context(
+            response_text,
+            query,
+            context_location,
+        )
+        await save_assistant_response(response_text, "farmer_context")
+        return {
+            **mode_metadata,
+            "message": request.message,
+            "understanding": query,
+            "tool": tool_choice,
+            "farmer_context": {"crop": remembered_crop, "growth_stage": remembered_stage},
+            "response": response_text,
         }
 
     # --------------------------------------------------------
@@ -847,10 +994,10 @@ async def process_chat_message(request: ChatRequest):
 
     try:
             query = await understand_with_llm(
-        request.message,
-        context,
-        language,
-    )
+            request.message,
+            request_context,
+            language,
+        )
 
     except Exception:
         # Fallback to existing rule-based understanding
@@ -859,11 +1006,55 @@ async def process_chat_message(request: ChatRequest):
             request.message,
             language,
         )
-    if query.get("intent") not in {"conversation", "unrelated", "unknown"} and not query.get("location"):
-        previous_location = context.get("location")
 
+    # Keep travel destinations separate from temporal wording when an upstream
+    # extractor returns a phrase such as "Goa tomorrow". This only applies the
+    # already-established rule parser as a narrow Traveller-mode correction.
+    if mode_resolution.active_mode is WeatherMode.TRAVELLER:
+        extracted_location = query.get("location")
+        if explicit_location and (
+            not extracted_location
+            or any(
+                phrase in str(extracted_location).lower()
+                for phrase in (
+                    "tomorrow",
+                    "today",
+                    "day after tomorrow",
+                    "next week",
+                    "next few days",
+                )
+            )
+        ):
+            query["location"] = explicit_location
+        if (
+            query.get("time") in (None, "unspecified")
+            and rule_query.get("time") != "unspecified"
+        ):
+            query["time"] = rule_query["time"]
+
+    # Deterministic location extraction is authoritative when the current
+    # message contains an explicit location. Otherwise, preserve the LLM
+    # result and fall back to the relevant remembered session location.
+    if explicit_location:
+        query["location"] = explicit_location
+    elif not query.get("location") and request_context.get("location"):
+        query["location"] = request_context.get("location")
+
+    if (
+        query.get("intent") not in {"conversation", "unrelated", "unknown"}
+        and not query.get("location")
+    ):
+        previous_location = request_context.get("location")
         if previous_location:
             query["location"] = previous_location
+    if (
+        mode_resolution.active_mode is WeatherMode.RESEARCHER
+        and query.get("intent") == "historical"
+        and query.get("time") == "unspecified"
+    ):
+        # The existing historical service works with bounded periods. A researcher
+        # asking for general/recent history receives the supported recent window.
+        query["time"] = "last_few_days"
     intent = query.get("intent")
     location_name = normalize_location_name(query.get("location"))
     query["location"] = location_name
@@ -875,10 +1066,10 @@ async def process_chat_message(request: ChatRequest):
 
     try:
         tool_choice = await choose_weather_tool(
-    request.message,
-    context,
-    language,
-)
+            request.message,
+            request_context,
+            language,
+        )
 
     except Exception:
         tool_choice = {
@@ -887,6 +1078,16 @@ async def process_chat_message(request: ChatRequest):
         }
 
     selected_tool = tool_choice.get("tool")
+
+    if mode_resolution.active_mode is WeatherMode.RESEARCHER:
+        selected_tool = choose_researcher_tool(request.message) or selected_tool
+
+    # Farmer Mode reuses the existing weather and IMD services, then runs the
+    # deterministic farmer layer. No separate weather tool/client is introduced.
+    if mode_resolution.active_mode is WeatherMode.FARMER:
+        selected_tool = "farmer_advisory"
+    if mode_resolution.active_mode is WeatherMode.TRAVELLER:
+        selected_tool = "traveller_advisory"
 
     # --------------------------------------------------------
     # STEP 3: Normalize tool name
@@ -917,7 +1118,10 @@ async def process_chat_message(request: ChatRequest):
     # Update returned tool information with the actual tool
     tool_choice["tool"] = selected_tool
 
-    if query.get("intent") in {"unrelated", "unknown"} or selected_tool == "conversation":
+    if (
+        mode_resolution.active_mode not in {WeatherMode.FARMER, WeatherMode.TRAVELLER}
+        and (query.get("intent") in {"unrelated", "unknown"} or selected_tool == "conversation")
+    ):
         response_text = UNRELATED_RESPONSE
 
         if selected_tool == "conversation":
@@ -929,6 +1133,7 @@ async def process_chat_message(request: ChatRequest):
         await save_assistant_response(response_text, selected_tool)
 
         return {
+            **mode_metadata,
             "message": request.message,
             "understanding": query,
             "tool": tool_choice,
@@ -952,6 +1157,7 @@ async def process_chat_message(request: ChatRequest):
         )
 
         return {
+            **mode_metadata,
             "message": request.message,
             "understanding": query,
             "tool": tool_choice,
@@ -977,6 +1183,7 @@ async def process_chat_message(request: ChatRequest):
         )
 
         return {
+            **mode_metadata,
             "message": request.message,
             "understanding": query,
             "tool": tool_choice,
@@ -993,6 +1200,114 @@ async def process_chat_message(request: ChatRequest):
         "country": location.get("country"),
         "state": location.get("admin1"),
     }
+
+    # ========================================================
+    # TOOL: FARMER INTELLIGENCE (Sprint 16)
+    # ========================================================
+    if selected_tool == "farmer_advisory":
+        current_data = await get_current_weather(latitude, longitude)
+        current_weather = format_current_weather(current_data)
+        forecast_data = await get_forecast(latitude, longitude)
+        forecast = format_forecast(forecast_data)
+        hourly_data = await get_hourly_forecast(latitude, longitude)
+        hourly_forecast = format_hourly_forecast(hourly_data)
+
+        # Keep the hourly evidence aligned with a selected daily forecast day.
+        target_hourly = hourly_forecast
+        if query.get("time") == "tomorrow":
+            tomorrow_prefix = (today_india() + timedelta(days=1)).isoformat()
+            target_hourly = [hour for hour in hourly_forecast if str(hour.get("time", "")).startswith(tomorrow_prefix)]
+
+        try:
+            cached_imd = await get_cached_imd_alerts(refresh_if_missing=True)
+        except Exception:
+            # IMD availability must not prevent a weather-based advisory; do not
+            # imply that no official warning exists when its feed is unavailable.
+            cached_imd = None
+        all_alerts = cached_imd["data"].get("alerts", []) if cached_imd else []
+        matching_alerts = filter_alerts_for_location(
+            all_alerts, latitude, longitude, location_info.get("name"), location_info.get("state")
+        )
+        advisory = build_farmer_advisory(
+            crop=farmer_details.get("crop") or context.get("crop"),
+            growth_stage=farmer_details.get("growth_stage") or context.get("growth_stage"),
+            current_weather=current_weather,
+            forecast=forecast,
+            hourly_forecast=target_hourly,
+            imd_warnings=matching_alerts if cached_imd is not None else None,
+            time_hint=query.get("time"),
+        )
+        data_for_llm = {
+            "location": location_info,
+            "farmer_advisory": advisory,
+        }
+        try:
+            response_text = await generate_mode_aware_response(data_for_llm)
+        except Exception:
+            response_text = format_farmer_advisory(advisory)
+
+        update_chat_context(response_text, query, location_info)
+        await save_assistant_response(response_text, selected_tool)
+        return {
+            **mode_metadata,
+            "message": request.message,
+            "understanding": query,
+            "tool": tool_choice,
+            "location": location_info,
+            "weather_used": {"current": current_weather, "forecast": forecast, "hourly_forecast": target_hourly},
+            "official_warnings": matching_alerts,
+            "official_warning_status": "available" if cached_imd is not None else "unavailable",
+            "farmer_advisory": advisory,
+            "response": response_text,
+        }
+
+    # ========================================================
+    # TOOL: TRAVELLER INTELLIGENCE (Sprint 18)
+    # ========================================================
+    if selected_tool == "traveller_advisory":
+        current_data = await get_current_weather(latitude, longitude)
+        current_weather = format_current_weather(current_data)
+        forecast_data = await get_forecast(latitude, longitude)
+        forecast = format_forecast(forecast_data)
+        hourly_data = await get_hourly_forecast(latitude, longitude)
+        hourly_forecast = format_hourly_forecast(hourly_data)
+
+        # Use the existing time semantics to keep hourly evidence on the travel date.
+        travel_date = resolve_date(query.get("time", ""))
+        target_hourly = hourly_forecast
+        if travel_date:
+            target_hourly = [hour for hour in hourly_forecast if str(hour.get("time", "")).startswith(travel_date.isoformat())]
+
+        try:
+            cached_imd = await get_cached_imd_alerts(refresh_if_missing=True)
+        except Exception:
+            cached_imd = None
+        all_alerts = cached_imd["data"].get("alerts", []) if cached_imd else []
+        matching_alerts = filter_alerts_for_location(
+            all_alerts, latitude, longitude, location_info.get("name"), location_info.get("state")
+        )
+        advisory = build_traveller_advisory(
+            destination=location_info["name"], current_weather=current_weather,
+            forecast=forecast, hourly_forecast=target_hourly,
+            imd_warnings=matching_alerts if cached_imd is not None else None,
+            time_hint=query.get("time"),
+        )
+        data_for_llm = {"location": location_info, "traveller_advisory": advisory}
+        try:
+            response_text = await generate_mode_aware_response(data_for_llm)
+        except Exception:
+            response_text = format_traveller_advisory(advisory)
+
+        update_chat_context(response_text, query, location_info)
+        await save_assistant_response(response_text, selected_tool)
+        return {
+            **mode_metadata, "message": request.message, "understanding": query,
+            "tool": tool_choice, "location": location_info,
+            "weather_used": {"current": current_weather, "forecast": forecast, "hourly_forecast": target_hourly},
+            "official_warnings": matching_alerts,
+            "official_warning_status": "available" if cached_imd is not None else "unavailable",
+            "traveller_advisory": advisory, "response": response_text,
+        }
 
     # ========================================================
     # TOOL: CURRENT WEATHER
@@ -1013,26 +1328,17 @@ async def process_chat_message(request: ChatRequest):
         }
 
         try:
-            response_text = await generate_weather_response(
-                request.message,
-                data_for_llm,
-                language,
-            )
+            response_text = await generate_mode_aware_response(data_for_llm)
         except Exception:
             response_text = weather
 
-        update_context(
-            request.session_id,
-            request.message,
-            response_text,
-            query,
-            location_info,
-        )
+        update_chat_context(response_text, query, location_info)
         await save_assistant_response(
             response_text,
             selected_tool,
         )
         return {
+            **mode_metadata,
             "message": request.message,
             "understanding": query,
             "tool": tool_choice,
@@ -1082,23 +1388,13 @@ async def process_chat_message(request: ChatRequest):
             }
 
             try:
-                response_text = await generate_weather_response(
-                    request.message,
-                    data_for_llm,
-                    language,
-                )
+                response_text = await generate_mode_aware_response(data_for_llm)
             except Exception:
                 response_text = (
                     "Here is the available hourly forecast."
                 )
 
-            update_context(
-                request.session_id,
-                request.message,
-                response_text,
-                query,
-                location_info,
-            )
+            update_chat_context(response_text, query, location_info)
 
             await save_assistant_response(
                 response_text,
@@ -1106,6 +1402,7 @@ async def process_chat_message(request: ChatRequest):
             )
 
             return {
+                **mode_metadata,
                 "message": request.message,
                 "understanding": query,
                 "tool": tool_choice,
@@ -1178,26 +1475,17 @@ async def process_chat_message(request: ChatRequest):
         }
 
         try:
-            response_text = await generate_weather_response(
-                request.message,
-                data_for_llm,
-                language,
-            )
+            response_text = await generate_mode_aware_response(data_for_llm)
         except Exception:
             response_text = "Here is the available forecast."
 
-        update_context(
-            request.session_id,
-            request.message,
-            response_text,
-            query,
-            location_info,
-        )
+        update_chat_context(response_text, query, location_info)
         await save_assistant_response(
             response_text,
             selected_tool,
         )
         return {
+            **mode_metadata,
             "message": request.message,
             "understanding": query,
             "tool": tool_choice,
@@ -1261,6 +1549,7 @@ async def process_chat_message(request: ChatRequest):
             )
 
             return {
+                **mode_metadata,
                 "message": request.message,
                 "understanding": query,
                 "tool": tool_choice,
@@ -1277,27 +1566,18 @@ async def process_chat_message(request: ChatRequest):
         }
 
         try:
-            response_text = await generate_weather_response(
-                request.message,
-                data_for_llm,
-                language,
-            )
+            response_text = await generate_mode_aware_response(data_for_llm)
         except Exception:
             response_text = "Here is the available historical weather data."
 
-        update_context(
-            request.session_id,
-            request.message,
-            response_text,
-            query,
-            location_info,
-        )
+        update_chat_context(response_text, query, location_info)
 
         await save_assistant_response(
             response_text,
             selected_tool,
         )
         return {
+            **mode_metadata,
             "message": request.message,
             "understanding": query,
             "tool": tool_choice,
@@ -1338,11 +1618,7 @@ async def process_chat_message(request: ChatRequest):
         }
 
         try:
-            response_text = await generate_weather_response(
-                request.message,
-                data_for_llm,
-                language,
-            )
+            response_text = await generate_mode_aware_response(data_for_llm)
         except Exception:
             response_text = (
                 f"The average temperature was "
@@ -1350,19 +1626,14 @@ async def process_chat_message(request: ChatRequest):
             )
 
 
-        update_context(
-            request.session_id,
-            request.message,
-            response_text,
-            query,
-            location_info,
-        )
+        update_chat_context(response_text, query, location_info)
 
         await save_assistant_response(
             response_text,
             selected_tool,
         )
         return {
+            **mode_metadata,
             "message": request.message,
             "understanding": query,
             "tool": tool_choice,
@@ -1418,29 +1689,20 @@ async def process_chat_message(request: ChatRequest):
         }
 
         try:
-            response_text = await generate_weather_response(
-                request.message,
-                data_for_llm,
-                language,
-            )
+            response_text = await generate_mode_aware_response(data_for_llm)
         except Exception:
             response_text = (
                 "I checked the upcoming weather conditions "
                 "for potential risks."
             )
 
-        update_context(
-            request.session_id,
-            request.message,
-            response_text,
-            query,
-            location_info,
-        )
+        update_chat_context(response_text, query, location_info)
         await save_assistant_response(
             response_text,
             selected_tool,
         )
         return {
+            **mode_metadata,
             "message": request.message,
             "understanding": query,
             "tool": tool_choice,
@@ -1485,21 +1747,11 @@ async def process_chat_message(request: ChatRequest):
         }
 
         try:
-            response_text = await generate_weather_response(
-                request.message,
-                data_for_llm,
-                language,
-            )
+            response_text = await generate_mode_aware_response(data_for_llm)
         except Exception:
             response_text = "Here are my weather-based recommendations."
 
-        update_context(
-            request.session_id,
-            request.message,
-            response_text,
-            query,
-            location_info,
-        )
+        update_chat_context(response_text, query, location_info)
 
         await save_assistant_response(
             response_text,
@@ -1507,6 +1759,7 @@ async def process_chat_message(request: ChatRequest):
         )
 
         return {
+            **mode_metadata,
             "message": request.message,
             "understanding": query,
             "tool": tool_choice,
@@ -1542,11 +1795,7 @@ async def process_chat_message(request: ChatRequest):
 
         try:
 
-            response_text = await generate_weather_response(
-                request.message,
-                data_for_llm,
-                language,
-            )
+            response_text = await generate_mode_aware_response(data_for_llm)
 
         except Exception:
 
@@ -1565,13 +1814,7 @@ async def process_chat_message(request: ChatRequest):
                     "was detected in the available forecast."
                 )
 
-        update_context(
-            request.session_id,
-            request.message,
-            response_text,
-            query,
-            location_info,
-        )
+        update_chat_context(response_text, query, location_info)
 
         await save_assistant_response(
             response_text,
@@ -1579,6 +1822,7 @@ async def process_chat_message(request: ChatRequest):
         )
 
         return {
+            **mode_metadata,
             "message": request.message,
             "understanding": query,
             "tool": tool_choice,
@@ -1641,11 +1885,7 @@ async def process_chat_message(request: ChatRequest):
 
         try:
 
-            response_text = await generate_weather_response(
-                request.message,
-                data_for_llm,
-                language,
-            )
+            response_text = await generate_mode_aware_response(data_for_llm)
 
         except Exception:
 
@@ -1654,18 +1894,13 @@ async def process_chat_message(request: ChatRequest):
                 "numerical weather prediction data."
             )
 
-        update_context(
-            request.session_id,
-            request.message,
-            response_text,
-            query,
-            location_info,
-        )
+        update_chat_context(response_text, query, location_info)
         await save_assistant_response(
             response_text,
             selected_tool,
         )
         return {
+            **mode_metadata,
             "message": request.message,
             "understanding": query,
             "tool": tool_choice,
@@ -1711,11 +1946,7 @@ async def process_chat_message(request: ChatRequest):
         }
 
         try:
-            response_text = await generate_weather_response(
-                request.message,
-                data_for_llm,
-                language,
-            )
+            response_text = await generate_mode_aware_response(data_for_llm)
         except Exception:
             if comparison:
                 first = comparison[0]
@@ -1731,18 +1962,13 @@ async def process_chat_message(request: ChatRequest):
                     "data to compare the models."
                 )
 
-        update_context(
-            request.session_id,
-            request.message,
-            response_text,
-            query,
-            location_info,
-        )
+        update_chat_context(response_text, query, location_info)
         await save_assistant_response(
             response_text,
             selected_tool,
         )
         return {
+            **mode_metadata,
             "message": request.message,
             "understanding": query,
             "tool": tool_choice,
@@ -1796,11 +2022,7 @@ async def process_chat_message(request: ChatRequest):
         }
 
         try:
-            response_text = await generate_weather_response(
-                request.message,
-                data_for_llm,
-                language,
-            )
+            response_text = await generate_mode_aware_response(data_for_llm)
         except Exception:
             if matching_alerts:
                 response_text = (
@@ -1818,18 +2040,13 @@ async def process_chat_message(request: ChatRequest):
                     "the latest available alerts."
                 )
 
-        update_context(
-            request.session_id,
-            request.message,
-            response_text,
-            query,
-            location_info,
-        )
+        update_chat_context(response_text, query, location_info)
         await save_assistant_response(
             response_text,
             selected_tool,
         )
         return {
+            **mode_metadata,
             "message": request.message,
             "understanding": query,
             "tool": tool_choice,
@@ -1851,6 +2068,7 @@ async def process_chat_message(request: ChatRequest):
         )
 
     return {
+            **mode_metadata,
             "message": request.message,
             "understanding": query,
             "tool": tool_choice,

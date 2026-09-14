@@ -3,7 +3,7 @@ from sqlalchemy import select
 from app.database import (
     AsyncSessionLocal,
 )
-from datetime import datetime
+from datetime import datetime, timezone
 from app.models import (
     User,
     Conversation,
@@ -214,7 +214,8 @@ async def save_official_alert(
 
         if existing:
             return existing
-
+        if sent_at is not None and sent_at.tzinfo is not None:
+            sent_at = sent_at.astimezone(timezone.utc).replace(tzinfo=None)
         record = OfficialAlert(
             identifier=identifier,
             source=alert.get(
