@@ -2,6 +2,7 @@ from datetime import datetime
 
 from sqlalchemy import (
     DateTime,
+    ForeignKey,
     String,
 )
 from sqlalchemy.orm import (
@@ -61,8 +62,27 @@ class User(Base):
         cascade="all, delete-orphan",
     )
 
-from sqlalchemy import ForeignKey
+    auth_sessions = relationship(
+        "AuthSession",
+        back_populates="user",
+        cascade="all, delete-orphan",
+    )
 
+
+class AuthSession(Base):
+    """Opaque, server-managed login sessions.  Only a token digest is stored."""
+
+    __tablename__ = "auth_sessions"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[int] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"), index=True
+    )
+    token_hash: Mapped[str] = mapped_column(String(64), unique=True, index=True)
+    expires_at: Mapped[datetime] = mapped_column(DateTime, index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+    user = relationship("User", back_populates="auth_sessions")
 
 class UserPreference(Base):
 
@@ -142,4 +162,4 @@ class SavedLocation(Base):
     user = relationship(
         "User",
         back_populates="saved_locations",
-    )    
+    )

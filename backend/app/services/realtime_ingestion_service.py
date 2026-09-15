@@ -1,4 +1,5 @@
 import asyncio
+import logging
 import os
 
 from app.services.database_service import save_official_alert
@@ -57,6 +58,7 @@ OPEN_METEO_TTL = int(
         "900",
     )
 )
+logger = logging.getLogger(__name__)
 
 GFS_TTL = int(
     os.getenv(
@@ -440,11 +442,8 @@ async def open_meteo_refresh_loop():
         except asyncio.CancelledError:
             raise
 
-        except Exception as exc:
-            print(
-                "Open-Meteo ingestion error:",
-                exc,
-            )
+        except Exception:
+            logger.error("Open-Meteo ingestion error")
 
         await asyncio.sleep(
             OPEN_METEO_TTL
@@ -476,11 +475,8 @@ async def gfs_refresh_loop():
         except asyncio.CancelledError:
             raise
 
-        except Exception as exc:
-            print(
-                "GFS ingestion error:",
-                exc,
-            )
+        except Exception:
+            logger.error("GFS ingestion error")
 
         await asyncio.sleep(
             GFS_TTL
@@ -498,11 +494,8 @@ async def imd_refresh_loop():
         except asyncio.CancelledError:
             raise
 
-        except Exception as exc:
-            print(
-                "IMD CAP ingestion error:",
-                exc,
-            )
+        except Exception:
+            logger.error("IMD CAP ingestion error")
 
         await asyncio.sleep(
             IMD_TTL

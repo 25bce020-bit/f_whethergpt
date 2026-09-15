@@ -51,6 +51,7 @@ async def get_db():
 async def init_db():
     from app.models import (
         User,
+        AuthSession,
         UserPreference,
         Conversation,
         ChatMessage,

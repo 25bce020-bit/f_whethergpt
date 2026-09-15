@@ -1,5 +1,10 @@
-from fastapi import FastAPI, File, Form, HTTPException, Query, UploadFile
-from pydantic import BaseModel
+import os
+import re
+import logging
+
+from fastapi import Cookie, Depends, FastAPI, File, Form, HTTPException, Query, Response, UploadFile
+from fastapi.middleware.cors import CORSMiddleware
+from pydantic import BaseModel, Field, field_validator
 from datetime import date, timedelta
 from app.services.recommendation_service import (
     generate_weather_recommendations,
@@ -12,6 +17,16 @@ from app.models import (
     WeatherRecord,
     OfficialAlert,
     IngestionLog,
+)
+from app.services.auth_service import (
+    AUTH_COOKIE_NAME,
+    SESSION_LIFETIME_DAYS,
+    create_auth_session,
+    get_current_user,
+    get_optional_current_user,
+    hash_password,
+    invalidate_auth_session,
+    verify_password,
 )
 from app.database import (
     init_db,
@@ -136,13 +151,123 @@ from app.services.voice_service import (
 )
 
 
+logger = logging.getLogger(__name__)
+AUTH_COOKIE_SECURE = os.getenv("AUTH_COOKIE_SECURE", "false").lower() == "true"
+AUTH_COOKIE_SAMESITE = os.getenv("AUTH_COOKIE_SAMESITE", "lax").lower()
+if AUTH_COOKIE_SAMESITE not in {"lax", "strict", "none"}:
+    raise RuntimeError("AUTH_COOKIE_SAMESITE must be lax, strict, or none.")
+if AUTH_COOKIE_SAMESITE == "none" and not AUTH_COOKIE_SECURE:
+    raise RuntimeError("AUTH_COOKIE_SAMESITE=none requires AUTH_COOKIE_SECURE=true.")
+
 app = FastAPI(
     title="DemoWeatherGPT",
     description="AI-powered conversational weather intelligence platform",
     version="0.1.0",
 )
 
+# Credentials are allowed only for explicit development origins.  Production
+# deployments must set CORS_ALLOWED_ORIGINS to their frontend origin(s).
+cors_origins = [origin.strip() for origin in os.getenv(
+    "CORS_ALLOWED_ORIGINS", "http://localhost:3000,http://localhost:5173,http://127.0.0.1:5173,http://127.0.0.1:5174"
+).split(",") if origin.strip()]
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=cors_origins,
+    allow_credentials=True,
+    allow_methods=["GET", "POST", "DELETE", "OPTIONS"],
+    allow_headers=["Content-Type", "X-Requested-With"],
+)
+
 realtime_tasks = []
+
+
+class SignupRequest(BaseModel):
+    name: str | None = Field(default=None, max_length=100)
+    email: str = Field(min_length=3, max_length=255)
+    password: str = Field(min_length=12, max_length=256)
+
+    @field_validator("email")
+    @classmethod
+    def validate_email(cls, value: str) -> str:
+        email = value.strip().lower()
+        if not re.fullmatch(r"[^\s@]+@[^\s@]+\.[^\s@]+", email):
+            raise ValueError("A valid email address is required.")
+        return email
+
+    @field_validator("password")
+    @classmethod
+    def validate_password(cls, value: str) -> str:
+        if not (re.search(r"[A-Za-z]", value) and re.search(r"\d", value)):
+            raise ValueError("Password must contain at least one letter and one number.")
+        return value
+
+
+class LoginRequest(BaseModel):
+    email: str = Field(min_length=3, max_length=255)
+    password: str = Field(min_length=1, max_length=256)
+
+    @field_validator("email")
+    @classmethod
+    def normalize_email(cls, value: str) -> str:
+        return value.strip().lower()
+
+
+def public_user(user: User) -> dict:
+    return {"id": user.id, "name": user.name, "email": user.email, "created_at": user.created_at.isoformat()}
+
+
+def set_auth_cookie(response: Response, token: str) -> None:
+    response.set_cookie(
+        key=AUTH_COOKIE_NAME,
+        value=token,
+        max_age=SESSION_LIFETIME_DAYS * 24 * 60 * 60,
+        httponly=True,
+        secure=AUTH_COOKIE_SECURE,
+        samesite=AUTH_COOKIE_SAMESITE,
+        path="/",
+    )
+
+
+@app.post("/auth/signup", status_code=201)
+async def signup(request: SignupRequest, response: Response):
+    async with AsyncSessionLocal() as session:
+        existing = await session.execute(select(User).where(User.email == request.email))
+        if existing.scalar_one_or_none() is not None:
+            raise HTTPException(status_code=409, detail="An account with that email already exists.")
+        user = User(name=request.name.strip() if request.name else None, email=request.email, password_hash=hash_password(request.password))
+        session.add(user)
+        await session.commit()
+        await session.refresh(user)
+    set_auth_cookie(response, await create_auth_session(user.id))
+    return {"user": public_user(user)}
+
+
+@app.post("/auth/login")
+async def login(request: LoginRequest, response: Response):
+    async with AsyncSessionLocal() as session:
+        result = await session.execute(select(User).where(User.email == request.email))
+        user = result.scalar_one_or_none()
+    if user is None or not verify_password(request.password, user.password_hash):
+        raise HTTPException(status_code=401, detail="Invalid email or password.")
+    set_auth_cookie(response, await create_auth_session(user.id))
+    return {"user": public_user(user)}
+
+
+@app.post("/auth/logout")
+async def logout(
+    response: Response,
+    auth_token: str | None = Cookie(None, alias=AUTH_COOKIE_NAME),
+):
+    await invalidate_auth_session(auth_token)
+    response.delete_cookie(AUTH_COOKIE_NAME, path="/")
+    return {"message": "Logged out."}
+
+
+@app.get("/auth/me")
+async def auth_me(current_user: User | None = Depends(get_optional_current_user)):
+    if current_user is None:
+        raise HTTPException(status_code=401, detail="Not authenticated.")
+    return {"user": public_user(current_user)}
 # ============================================================
 # ROOT
 # ============================================================
@@ -165,9 +290,7 @@ async def start_realtime_services():
         start_realtime_ingestion()
     )
 
-    print(
-        "Real-time ingestion started."
-    )
+    logger.info("Real-time ingestion started.")
 
 
 @app.on_event("shutdown")
@@ -179,9 +302,7 @@ async def stop_realtime_services():
         realtime_tasks
     )
 
-    print(
-        "Real-time ingestion stopped."
-    )
+    logger.info("Real-time ingestion stopped.")
 # ============================================================
 # CURRENT WEATHER
 # ============================================================
@@ -201,7 +322,7 @@ async def current_weather(
     }
 
 @app.get("/realtime/status")
-async def realtime_status():
+async def realtime_status(_current_user: User = Depends(get_current_user)):
 
     cache = (
         await get_all_cache_status()
@@ -221,7 +342,7 @@ async def realtime_status():
 
 
 @app.get("/performance/cache")
-async def cache_performance_status():
+async def cache_performance_status(_current_user: User = Depends(get_current_user)):
     return await get_cache_metrics()
 
 @app.post(
@@ -229,6 +350,7 @@ async def cache_performance_status():
 )
 async def realtime_refresh_location(
     location_name: str,
+    _current_user: User = Depends(get_current_user),
 ):
 
     result = await refresh_location(
@@ -237,7 +359,7 @@ async def realtime_refresh_location(
 
     return result
 @app.get("/database/status")
-async def database_status():
+async def database_status(_current_user: User = Depends(get_current_user)):
 
     try:
 
@@ -254,19 +376,16 @@ async def database_status():
             "status": "connected",
         }
 
-    except Exception as exc:
-
-        return {
-            "database": "PostgreSQL",
-            "status": "error",
-            "error": str(exc),
-        }
+    except Exception:
+        logger.error("Database health check failed.")
+        raise HTTPException(status_code=503, detail="Database is unavailable.")
 
 @app.get(
     "/realtime/location/{location_name}"
 )
 async def realtime_location(
     location_name: str,
+    _current_user: User = Depends(get_current_user),
 ):
 
     data = (
@@ -286,7 +405,7 @@ async def realtime_location(
     return data
 
 @app.get("/database/summary")
-async def database_summary():
+async def database_summary(_current_user: User = Depends(get_current_user)):
 
     async with AsyncSessionLocal() as session:
 
@@ -348,7 +467,7 @@ async def database_summary():
             ingestion_logs or 0,
     }
 @app.get("/realtime/imd")
-async def realtime_imd():
+async def realtime_imd(_current_user: User = Depends(get_current_user)):
 
     cached = (
         await get_cached_imd_alerts(
@@ -377,7 +496,7 @@ async def realtime_imd():
     }
 
 @app.post("/realtime/refresh")
-async def realtime_refresh_all():
+async def realtime_refresh_all(_current_user: User = Depends(get_current_user)):
 
     locations = (
         await refresh_all_tracked_locations()
@@ -393,11 +512,9 @@ async def realtime_refresh_all():
             )
         )
 
-    except Exception as exc:
-
-        imd = {
-            "error": str(exc)
-        }
+    except Exception:
+        logger.error("IMD refresh failed.")
+        imd = None
 
     return {
         "locations": locations,
@@ -405,7 +522,7 @@ async def realtime_refresh_all():
     }
 
 @app.delete("/realtime/cache")
-async def realtime_clear_cache():
+async def realtime_clear_cache(_current_user: User = Depends(get_current_user)):
 
     await clear_cache()
 
@@ -802,7 +919,7 @@ async def weather_model_comparison(
 # CHAT
 # ============================================================
 
-async def process_chat_message(request: ChatRequest):
+async def process_chat_message(request: ChatRequest, current_user: User | None = None):
 
     # --------------------------------------------------------
     # STEP 0: Load conversation context
@@ -817,6 +934,7 @@ async def process_chat_message(request: ChatRequest):
     mode_resolution = resolve_mode(request.message, selected_mode, context)
     mode_configuration = get_mode_configuration(mode_resolution.active_mode)
     mode_metadata = {
+        "session_id": request.session_id,
         "selected_mode": mode_resolution.selected_mode.value,
         "active_mode": mode_resolution.active_mode.value,
         "display_mode": mode_resolution.display_mode.value,
@@ -895,6 +1013,7 @@ async def process_chat_message(request: ChatRequest):
         session_id=request.session_id,
         role="user",
         content=request.message,
+        user_id=current_user.id if current_user else None,
     )
 
     async def save_assistant_response(
@@ -906,6 +1025,7 @@ async def process_chat_message(request: ChatRequest):
             role="assistant",
             content=response_text,
             tool_used=tool_used,
+            user_id=current_user.id if current_user else None,
         )
 
     conversation = get_conversation_response(request.message)
@@ -2077,9 +2197,16 @@ async def process_chat_message(request: ChatRequest):
 
 
 @app.post("/chat", summary="Send a text query to WeatherGPT")
-async def chat(request: ChatRequest):
+async def chat(
+    request: ChatRequest,
+    current_user: User | None = Depends(get_optional_current_user),
+):
     """Public text-chat endpoint retained for backward compatibility."""
-    return await process_chat_message(request)
+    # Existing unit integrations call this route function directly, bypassing
+    # FastAPI dependency resolution.  That must retain the historic guest path.
+    if not isinstance(current_user, User):
+        current_user = None
+    return await process_chat_message(request, current_user)
 
 
 async def _voice_transcription(audio: UploadFile, language: str | None) -> dict:

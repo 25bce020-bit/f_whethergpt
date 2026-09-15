@@ -59,18 +59,23 @@ async def get_or_create_conversation(
 
     async with AsyncSessionLocal() as session:
 
-        result = await session.execute(
-            select(Conversation).where(
-                Conversation.session_id
-                == session_id
-            )
-        )
-
-        conversation = (
-            result.scalar_one_or_none()
-        )
+        statement = select(Conversation).where(Conversation.session_id == session_id)
+        if user_id is None:
+            statement = statement.where(Conversation.user_id.is_(None))
+        else:
+            # A matching guest conversation is deliberately claimed at login;
+            # another account's conversation is never reused.
+            statement = statement.where(
+                (Conversation.user_id == user_id) | Conversation.user_id.is_(None)
+            ).order_by(Conversation.user_id.desc().nulls_last())
+        result = await session.execute(statement)
+        conversation = result.scalars().first()
 
         if conversation:
+            if user_id is not None and conversation.user_id is None:
+                conversation.user_id = user_id
+                await session.commit()
+                await session.refresh(conversation)
             return conversation
 
         conversation = Conversation(

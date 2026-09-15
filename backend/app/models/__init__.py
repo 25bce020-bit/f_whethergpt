@@ -1,5 +1,6 @@
 from app.models.user import (
     User,
+    AuthSession,
     UserPreference,
     SavedLocation,
 )
@@ -24,6 +25,7 @@ from app.models.ingestion import (
 
 __all__ = [
     "User",
+    "AuthSession",
     "UserPreference",
     "SavedLocation",
     "Conversation",
