@@ -1,0 +1,19 @@
+/* Targeted navigation refinements: compact guest account block and page history control. */
+.drawer-bottom{padding-top:13px}
+.guest-account{padding:3px}
+.guest-account-copy{display:flex;align-items:center;gap:9px;padding:6px 6px 10px}
+.guest-account-copy strong{display:block;font-size:13px}
+.guest-account-copy small{display:block;margin-top:2px;color:#64748b;font-size:11px}
+.guest-avatar{display:grid;place-items:center;width:28px;height:28px;border-radius:50%;background:#e0f2fe;color:#0369a1}
+.guest-avatar svg{width:16px}
+.guest-actions{display:grid;grid-template-columns:1fr 1fr;gap:7px}
+.guest-actions a{display:flex;align-items:center;justify-content:center;gap:6px;min-height:34px;border:1px solid rgba(255,255,255,.92);border-radius:999px;background:rgba(255,255,255,.54);color:#0369a1;font-size:12px;font-weight:700}
+.guest-actions a:hover{background:#e0f2fe}
+.guest-actions svg{width:16px;height:16px}
+.page-back{width:42px;height:42px;flex:0 0 auto}
+.page-back:hover{background:#e0f2fe;color:#0284c7}
+@media(max-width:767px){.page-back{width:40px;height:40px}.guest-actions a{min-height:40px}}
+.drawer-brand{min-height:48px;margin:2px 54px 26px 0;font-size:22px;font-weight:600;line-height:1;letter-spacing:-.04em;color:#0f172a}
+.drawer-brand>svg{width:42px;height:42px;flex:0 0 42px;padding:8px;border-radius:14px;background:rgba(224,242,254,.7);color:#0284c7}
+@media(max-width:767px){.drawer-brand{min-height:44px;margin:1px 48px 24px 0;font-size:20px}.drawer-brand>svg{width:40px;height:40px;flex-basis:40px}.drawer .close{right:14px;top:16px}}
+.map-area{height:460px}.weather-map{height:100%;width:100%;z-index:0}.weather-map-marker span{display:grid;place-items:center;width:24px;height:24px;border-radius:50%;background:#0284c7;color:#fff;border:3px solid #fff;box-shadow:0 5px 14px #0284c788;font-size:0}.weather-warning-marker span{display:grid;place-items:center;width:20px;height:20px;border-radius:50%;background:#f97316;color:#fff;border:2px solid #fff;font-weight:700;font-size:12px}.map-warning{display:block;margin-top:9px;color:#9a3412;font-weight:700}@media(max-width:767px){.map-area{height:340px}}
