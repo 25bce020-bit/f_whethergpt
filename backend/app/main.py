@@ -106,6 +106,7 @@ from app.services.language_service import (
     canonicalize_for_fallback,
     extract_location_hint,
     resolve_response_language,
+    resolve_response_language_and_script,
 )
 from app.services.gis_service import (
     current_weather_map,
@@ -121,6 +122,7 @@ from app.services.advisory_service import (
 )
 from app.services.mode_service import (
     WeatherMode,
+    build_mode_mismatch_response,
     get_mode_configuration,
     resolve_mode,
     resolve_selected_mode,
@@ -129,6 +131,7 @@ from app.services.conversation_service import (
     UNRELATED_RESPONSE,
     get_conversation_response,
 )
+from app.services.agromet_service import get_agromet_advisory
 from app.services.farmer_service import (
     build_farmer_advisory,
     extract_farmer_context,
@@ -933,17 +936,19 @@ async def process_chat_message(request: ChatRequest, current_user: User | None =
     )
     mode_resolution = resolve_mode(request.message, selected_mode, context)
     mode_configuration = get_mode_configuration(mode_resolution.active_mode)
+    language, script = resolve_response_language_and_script(
+        request.language,
+        request.message,
+        context.get("language"),
+    )
     mode_metadata = {
         "session_id": request.session_id,
         "selected_mode": mode_resolution.selected_mode.value,
         "active_mode": mode_resolution.active_mode.value,
         "display_mode": mode_resolution.display_mode.value,
+        "language": language,
+        "script": script,
     }
-    language = resolve_response_language(
-        request.language,
-        request.message,
-        context.get("language"),
-    )
     farmer_details = extract_farmer_context(request.message)
     request_context = relevant_context(context, mode_resolution.active_mode.value)
 
@@ -987,6 +992,7 @@ async def process_chat_message(request: ChatRequest, current_user: User | None =
                     request.message,
                     weather_data,
                     language,
+                    script=script,
                     mode_persona=mode_configuration.persona_prompt,
                 )
             except Exception:
@@ -998,6 +1004,7 @@ async def process_chat_message(request: ChatRequest, current_user: User | None =
                     request.message,
                     weather_data,
                     language,
+                    script=script,
                     mode_persona=mode_configuration.persona_prompt,
                 )
             except Exception:
@@ -1006,6 +1013,7 @@ async def process_chat_message(request: ChatRequest, current_user: User | None =
             request.message,
             weather_data,
             language,
+            script=script,
             mode_persona=mode_configuration.persona_prompt,
         )
 
@@ -1052,6 +1060,40 @@ async def process_chat_message(request: ChatRequest, current_user: User | None =
             "understanding": query,
             "tool": tool_choice,
             "response": response_text,
+            "language": language,
+        }
+
+    # Mode boundary constraint for manual specialized modes
+    if mode_resolution.is_mismatch and mode_resolution.suggested_mode:
+        mismatch_text = build_mode_mismatch_response(
+            selected_mode=mode_resolution.selected_mode,
+            suggested_mode=mode_resolution.suggested_mode,
+            language=language,
+            script=script,
+        )
+        query = {
+            "intent": "mode_mismatch",
+            "location": None,
+            "time": "unspecified",
+            "activity": None,
+            "suggested_mode": mode_resolution.suggested_mode.value,
+        }
+        tool_choice = {
+            "tool": "mode_boundary",
+            "reason": f"Question belongs to {mode_resolution.suggested_mode.value} mode rather than {mode_resolution.selected_mode.value} mode.",
+        }
+
+        update_chat_context(mismatch_text, query)
+        await save_assistant_response(mismatch_text, "mode_boundary")
+
+        return {
+            **mode_metadata,
+            "message": request.message,
+            "understanding": query,
+            "tool": tool_choice,
+            "response": mismatch_text,
+            "mode_mismatch": True,
+            "suggested_mode": mode_resolution.suggested_mode.value,
             "language": language,
         }
 
@@ -1113,10 +1155,11 @@ async def process_chat_message(request: ChatRequest, current_user: User | None =
     # --------------------------------------------------------
 
     try:
-            query = await understand_with_llm(
+        query = await understand_with_llm(
             request.message,
             request_context,
             language,
+            script=script,
         )
 
     except Exception:
@@ -1152,6 +1195,12 @@ async def process_chat_message(request: ChatRequest, current_user: User | None =
         ):
             query["time"] = rule_query["time"]
 
+    if (
+        query.get("time") in (None, "unspecified")
+        and rule_query.get("time") != "unspecified"
+    ):
+        query["time"] = rule_query["time"]
+
     # Deterministic location extraction is authoritative when the current
     # message contains an explicit location. Otherwise, preserve the LLM
     # result and fall back to the relevant remembered session location.
@@ -1179,6 +1228,7 @@ async def process_chat_message(request: ChatRequest, current_user: User | None =
     location_name = normalize_location_name(query.get("location"))
     query["location"] = location_name
     query["language"] = language
+    query["script"] = script
 
     # --------------------------------------------------------
     # STEP 2: Select weather tool using Groq
@@ -1189,6 +1239,7 @@ async def process_chat_message(request: ChatRequest, current_user: User | None =
             request.message,
             request_context,
             language,
+            script=script,
         )
 
     except Exception:
@@ -1319,6 +1370,8 @@ async def process_chat_message(request: ChatRequest, current_user: User | None =
         "name": location["name"],
         "country": location.get("country"),
         "state": location.get("admin1"),
+        "latitude": latitude,
+        "longitude": longitude,
     }
 
     # ========================================================
@@ -1348,14 +1401,29 @@ async def process_chat_message(request: ChatRequest, current_user: User | None =
         matching_alerts = filter_alerts_for_location(
             all_alerts, latitude, longitude, location_info.get("name"), location_info.get("state")
         )
+        target_crop = farmer_details.get("crop") or context.get("crop")
+        try:
+            agromet_data = await get_agromet_advisory(
+                latitude=latitude,
+                longitude=longitude,
+                location_name=location_info.get("name"),
+                state_name=location_info.get("state"),
+                crop=target_crop,
+                country_code=location_info.get("country_code", "IN"),
+            )
+        except Exception as agromet_exc:
+            logger.warning("IMD Agromet advisory retrieval failed: %s", agromet_exc)
+            agromet_data = None
+
         advisory = build_farmer_advisory(
-            crop=farmer_details.get("crop") or context.get("crop"),
+            crop=target_crop,
             growth_stage=farmer_details.get("growth_stage") or context.get("growth_stage"),
             current_weather=current_weather,
             forecast=forecast,
             hourly_forecast=target_hourly,
             imd_warnings=matching_alerts if cached_imd is not None else None,
             time_hint=query.get("time"),
+            agromet_advisory=agromet_data,
         )
         data_for_llm = {
             "location": location_info,
@@ -1377,6 +1445,7 @@ async def process_chat_message(request: ChatRequest, current_user: User | None =
             "weather_used": {"current": current_weather, "forecast": forecast, "hourly_forecast": target_hourly},
             "official_warnings": matching_alerts,
             "official_warning_status": "available" if cached_imd is not None else "unavailable",
+            "official_agromet": agromet_data,
             "farmer_advisory": advisory,
             "response": response_text,
         }
@@ -1477,6 +1546,9 @@ async def process_chat_message(request: ChatRequest, current_user: User | None =
         # ====================================================
 
         hourly_time_values = {
+            "next_3_hours",
+            "next_three_hours",
+            "next_few_hours",
             "tonight",
             "tomorrow_morning",
             "tomorrow_afternoon",
@@ -2248,11 +2320,22 @@ async def voice_chat(
     audio: UploadFile = File(..., description="Audio recording to transcribe and process"),
     session_id: str = Form("default", description="Conversation session identifier"),
     language: str | None = Form(None, description="Optional supported language code"),
+    selected_mode: WeatherMode = Form(WeatherMode.NORMAL, description="Optional selected mode"),
 ):
     transcription = await _voice_transcription(audio, language)
+    mode_value = WeatherMode.NORMAL
+    if isinstance(selected_mode, WeatherMode):
+        mode_value = selected_mode
+    elif isinstance(selected_mode, str):
+        try:
+            mode_value = WeatherMode(selected_mode)
+        except ValueError:
+            mode_value = WeatherMode.NORMAL
+
     response = await process_chat_message(ChatRequest(
         message=transcription["transcript"],
         session_id=session_id,
+        selected_mode=mode_value,
         language=transcription["language"],
     ))
     return {

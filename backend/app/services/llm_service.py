@@ -44,6 +44,7 @@ async def choose_weather_tool(
     message: str,
     context: dict | None = None,
     language: str = "en",
+    script: str = "native",
 ) -> dict:
 
     context = context or {}
@@ -54,8 +55,8 @@ async def choose_weather_tool(
     prompt = f"""
 You are the tool-selection system for WeatherGPT.
 
-The user may write in an Indian language or a mixed-language form. Understand
-the meaning, but keep tool names language-independent. {get_language_instruction(language)}
+The user may write in an Indian language, Gujlish, Hinglish, or a mixed-language form. Understand
+the meaning, but keep tool names language-independent. {get_language_instruction(language, script)}
 
 Choose exactly ONE tool that should handle the user's CURRENT question.
 
@@ -199,6 +200,7 @@ async def understand_with_llm(
     message: str,
     context: dict | None = None,
     language: str = "en",
+    script: str = "native",
 ) -> dict:
 
     context = context or {}
@@ -217,10 +219,10 @@ async def understand_with_llm(
     prompt = f"""
 You are the query understanding system for WeatherGPT.
 
-The user language is {get_language_instruction(language)} Understand Hindi,
-Gujarati, Marathi, Bengali, Tamil, Telugu, Kannada, Malayalam, Punjabi and
-Odia (including practical mixed-language input). Return canonical English
-intent, location, and time values; do not translate city names into query glue.
+The user language is {get_language_instruction(language, script)} Understand Hindi,
+Gujarati, Marathi, Bengali, Tamil, Telugu, Kannada, Malayalam, Punjabi, Odia,
+Gujlish (Roman Gujarati), Hinglish (Roman Hindi), and mixed-language input.
+Return canonical English intent, location, and time values; do not translate city names into query glue.
 
 Analyze the user's current weather question using both
 the current message and the previous conversation context.
@@ -246,7 +248,7 @@ The JSON must contain exactly these fields:
 {{
     "intent": "current_weather | forecast | advisory | historical | climate | recommendation | disaster_alert | nwp_gfs | model_comparison | official_warning | conversation | unrelated",
     "location": "city name or null",
-    "time": "now | today | tonight | tomorrow | tomorrow_morning | tomorrow_afternoon | tomorrow_evening | day_after_tomorrow | day_after_tomorrow_morning | next_3_days | next_few_days | next_week | this_weekend | this_saturday | this_sunday | next_monday | next_tuesday | next_wednesday | next_thursday | next_friday | next_saturday | next_sunday | next_24_hours | next_48_hours | yesterday | last_few_days | last_week | unspecified"
+    "time": "now | today | tonight | tomorrow | tomorrow_morning | tomorrow_afternoon | tomorrow_evening | day_after_tomorrow | day_after_tomorrow_morning | next_3_days | next_few_days | next_week | this_weekend | this_saturday | this_sunday | next_monday | next_tuesday | next_wednesday | next_thursday | next_friday | next_saturday | next_sunday | next_3_hours | next_few_hours | next_24_hours | next_48_hours | yesterday | last_few_days | last_week | unspecified"
     "activity": "activity or decision being asked about, or null"
 }}
 
@@ -261,6 +263,7 @@ Rules:
    use the previous conversation location when appropriate.
 Time interpretation:
 
+- "next 3 hours" / "next three hours" / "next few hours" = next_3_hours
 - "tonight" = tonight
 - "tomorrow morning" = tomorrow_morning
 - "tomorrow afternoon" = tomorrow_afternoon
@@ -368,6 +371,7 @@ async def generate_weather_response(
     user_message: str,
     weather_data: dict,
     language: str = "en",
+    script: str = "native",
     mode_persona: str | None = None,
 ) -> str:
     """
@@ -379,7 +383,7 @@ You are WeatherGPT, an intelligent weather assistant.
 
 Answer the user's question using ONLY the weather data provided below.
 
-{get_language_instruction(language)} Preserve all supplied values, the
+{get_language_instruction(language, script)} Preserve all supplied values, the
 official status/severity of any warning, and do not invent facts while translating.
 
 User question:
@@ -413,8 +417,15 @@ When responding to disaster or extreme-weather alerts:
 - Distinguish between forecast-based risk and official alerts.
 - If farmer_advisory is supplied, treat it as the authoritative decision context:
   do not add unsupported crop facts, soil-moisture claims, maturity claims, or
-  chemical-specific instructions. Label official IMD warnings separately from
-  WeatherGPT-derived farmer advice.
+  chemical-specific instructions.
+  - If official IMD Agromet advisory (agromet_advisory) is present in farmer_advisory,
+    prominently include the official IMD Agromet/GKMS recommendations and cite the source
+    as "IMD Agromet / GKMS". Retain the distinction between the official IMD advisory
+    and WeatherGPT's weather-based interpretation.
+  - If official IMD Agromet advisory is unavailable, clearly state that no current official
+    IMD Agromet advisory was available for this location/crop, and provide guidance based
+    only on the supplied weather forecast without inventing official IMD claims.
+  - Label official IMD warnings and advisories separately from WeatherGPT-derived farmer advice.
 - If researcher_analysis is supplied, use it as the authoritative analysis input.
   Clearly distinguish retrieved observations, forecast/model output, official IMD
   warnings, and WeatherGPT-derived interpretation. Do not infer long-term climate

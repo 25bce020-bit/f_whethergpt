@@ -50,7 +50,7 @@ Use chat with `selected_mode:"farmer"`; automatic farmer routing may instead ret
 {"message":"Can I spray cotton in Pune tomorrow?","session_id":"guest-123","selected_mode":"farmer"}
 ```
 
-Look for `farmer_advisory` with `crop`, `growth_stage`, `weather_summary`, decisions for `irrigation`/`spraying`/`sowing`/`harvesting`, `today_advisory`, `imd_warning_status`, `imd_actions`, and `limitations`.
+Look for `farmer_advisory` with `crop`, `growth_stage`, `weather_summary`, decisions for `irrigation`/`spraying`/`sowing`/`harvesting`, `today_advisory`, `imd_warning_status`, `imd_actions`, `agromet_advisory` (official IMD Agromet / GKMS advisories with `crop`, `title`, `recommendation`, `recommendation_regional`, `valid_until`, and source attribution), `agromet_status`, and `limitations`. When present, top-level `official_agromet` contains the full normalized Agromet payload.
 
 ## Researcher
 

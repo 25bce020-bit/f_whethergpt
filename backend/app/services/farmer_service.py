@@ -185,6 +185,7 @@ def build_farmer_advisory(
     hourly_forecast: list[dict] | None,
     imd_warnings: list[dict] | None,
     time_hint: str | None = None,
+    agromet_advisory: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Return structured decisions based only on data supplied by the caller."""
     forecast = forecast or []
@@ -235,6 +236,8 @@ def build_farmer_advisory(
     if not today_advisory:
         today_advisory.append("No weather-based farmer advisory can be made until current or forecast data are available.")
 
+    agromet_available = bool(agromet_advisory and agromet_advisory.get("available") and agromet_advisory.get("advisories"))
+
     return {
         "crop": crop,
         "growth_stage": growth_stage,
@@ -246,6 +249,8 @@ def build_farmer_advisory(
         "today_advisory": today_advisory,
         "imd_warning_status": "available" if imd_warnings is not None else "unavailable",
         "imd_actions": imd_farmer_actions(imd_warnings or []),
+        "agromet_advisory": agromet_advisory if agromet_available else None,
+        "agromet_status": "available" if agromet_available else "unavailable",
         "limitations": [
             "This is weather-based guidance only; WeatherGPT does not have field soil-moisture data.",
             "Crop maturity and chemical-specific pesticide instructions are not determined by this advisory.",
@@ -268,4 +273,16 @@ def format_farmer_advisory(advisory: dict[str, Any]) -> str:
         lines.append(f"WeatherGPT farmer advisory: {action['weathergpt_farmer_advisory']}")
     if advisory.get("imd_warning_status") == "unavailable":
         lines.append("Official IMD warning data were unavailable for this advisory.")
+    
+    agromet = advisory.get("agromet_advisory")
+    if agromet and agromet.get("advisories"):
+        lines.append("Official IMD Agromet / GKMS Advisory:")
+        for adv in agromet["advisories"]:
+            crop_label = f" ({adv['crop']})" if adv.get("crop") else ""
+            lines.append(f"- {adv['title']}{crop_label}: {adv['recommendation']}")
+            if adv.get("valid_until"):
+                lines.append(f"  Valid until: {adv['valid_until']}")
+    elif advisory.get("agromet_status") == "unavailable":
+        lines.append("Official IMD Agromet advisory was unavailable for this location.")
+        
     return "\n".join(lines)

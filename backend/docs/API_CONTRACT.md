@@ -117,7 +117,7 @@ Conditional top-level fields are below; consumers must feature-detect them.
 | GFS | `location`, `nwp: {model,provider}`, `daily_forecast: GfsDaily[]`, `hourly_forecast: GfsHourly[]` (first 24 hours) |
 | Model comparison | `location`, `model_comparison: {base_model, nwp_model, nwp_provider, comparison: ModelComparison[]}` |
 | Official warning | `location`, `official_warnings: OfficialWarning[]` |
-| Farmer mode | `location`, `weather_used: {current: CurrentWeather, forecast: DailyForecast[], hourly_forecast: HourlyForecast[]}`, `official_warnings`, `official_warning_status: "available"|"unavailable"`, `farmer_advisory` |
+| Farmer mode | `location`, `weather_used: {current: CurrentWeather, forecast: DailyForecast[], hourly_forecast: HourlyForecast[]}`, `official_warnings`, `official_warning_status: "available"|"unavailable"`, `official_agromet` (optional object), `farmer_advisory` |
 | Traveller mode | Same `weather_used` and official warning fields, plus `traveller_advisory` |
 
 Unrelated, missing-location, unresolvable-location, unsupported historical-period, and unsupported-tool branches return only the common envelope; `location` and weather data are absent. These application outcomes are HTTP `200`, not errors. Database persistence and uncaught service failures can return `500`.
@@ -152,6 +152,34 @@ There is no standalone farmer endpoint. Use `POST /chat` with `selected_mode: "f
   "today_advisory": ["…"],
   "imd_warning_status": "available|unavailable",
   "imd_actions": [{"official_imd_warning": {"event": "…", "severity": "…", "headline": "…"}, "weathergpt_farmer_advisory": "…"}],
+  "agromet_advisory": {
+    "available": true,
+    "status": "available",
+    "source": "IMD Agromet/GKMS",
+    "location": {"state": "…", "district": "…", "latitude": 0, "longitude": 0},
+    "advisories": [
+      {
+        "id": 101,
+        "title": "…",
+        "crop": "…",
+        "variety": "…",
+        "weather_condition": "…",
+        "weather_condition_regional": "…",
+        "recommendation": "…",
+        "recommendation_regional": "…",
+        "language": "…",
+        "valid_from": "…",
+        "valid_until": "…",
+        "updated_at": "…"
+      }
+    ],
+    "source_attribution": {
+      "provider": "India Meteorological Department (IMD) - GKMS / Agromet Advisory",
+      "url": "https://agromet.imd.gov.in",
+      "retrieved_at": "…"
+    }
+  },
+  "agromet_status": "available|unavailable",
   "limitations": ["…"]
 }
 ```

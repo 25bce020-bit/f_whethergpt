@@ -11,16 +11,20 @@ export interface SelectedLocation {
 }
 
 export function selectLocation(location: LocationResult | Location): SelectedLocation | null {
-  if (location.latitude === undefined || location.longitude === undefined) return null;
+  if (!location || !location.name) return null;
   const selected: SelectedLocation = {
     name: location.name,
-    latitude: location.latitude,
-    longitude: location.longitude,
+    latitude: location.latitude ?? 0,
+    longitude: location.longitude ?? 0,
     country: location.country ?? null,
     state: 'state' in location ? location.state ?? null : location.admin1 ?? null,
   };
   sessionStorage.setItem(STORAGE_KEY, JSON.stringify(selected));
   return selected;
+}
+
+export function clearSelectedLocation(): void {
+  sessionStorage.removeItem(STORAGE_KEY);
 }
 
 export function getSelectedLocation(): SelectedLocation | null {

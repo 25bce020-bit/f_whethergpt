@@ -24,6 +24,16 @@ INDIA_LOCATION_ALIASES = {
     },
 }
 
+TEMPORAL_PHRASES_RE = re.compile(
+    r"^(?:the\s+)?(?:next|last|past|upcoming|coming|this|previous)\s+(?:\d+|one|two|three|four|five|six|seven|eight|nine|ten|few|couple\s+of)?\s*(?:hours?|hrs?|days?|weeks?|months?|years?|morning|afternoon|evening|night|weekend)\b"
+    r"|^(?:next|last|this)\s+(?:monday|tuesday|wednesday|thursday|friday|saturday|sunday)\b"
+    r"|^(?:today|tomorrow|yesterday|tonight|now|currently|right\s+now|day\s+after\s+tomorrow)\b"
+    r"|\b(?:hours?|hrs?|minutes?|mins?|days?|weeks?|months?)\b"
+    r"|^(?:what|when|how|where|which|why|is|will|can|could|would|should|do|does|did)\b"
+    r"|^(?:forecast|weather|rain|temperature|temp|climate|warning|alert|condition|conditions)\b",
+    re.IGNORECASE,
+)
+
 
 def normalize_location_name(name: str | None) -> str | None:
     """
@@ -43,32 +53,28 @@ def normalize_location_name(name: str | None) -> str | None:
     # Collapse repeated whitespace.
     cleaned = re.sub(r"\s+", " ", cleaned).strip()
 
+    # Split on punctuation sentences
+    cleaned = re.split(r"[.?!]", cleaned, maxsplit=1)[0].strip()
+
     # Remove common leading prepositions if the model included them.
     cleaned = re.sub(
-        r"^(?:in|at|near|around|from|to)\s+",
+        r"^(?:in|at|near|around|from|to|of|for)\s+",
         "",
         cleaned,
         flags=re.IGNORECASE,
     )
 
-    # Fix sentence-boundary contamination such as:
-    # "Ahmedabad. Is tomorrow suitable?"
-    # becoming "ahmedabad. is"
-    #
-    # We only do this when the text after the period looks like the
-    # beginning of a new sentence. This avoids breaking legitimate
-    # names such as "St. Louis".
+    # Trailing punctuation
+    cleaned = re.sub(r"[?.!,;:]+$", "", cleaned).strip()
+
+    # English and Indian-language postpositions which may trail a city returned
+    # by an LLM or fallback parser (for example, "Ahmedabad mein").
     cleaned = re.sub(
-        r"\.\s+(?:is|are|was|were|will|can|could|should|would|"
-        r"do|does|did|may|might|has|have|what|how|when|where|why|"
-        r"which|any)\b.*$",
+        r"\s+(?:in|at|for|mein|me|में|मा(?:ं|ँ)|માં|मध्ये|இல்)$",
         "",
         cleaned,
         flags=re.IGNORECASE,
     )
-
-    # Remove trailing punctuation.
-    cleaned = cleaned.rstrip(".,;:!?")
 
     # Collapse whitespace one final time.
     cleaned = re.sub(r"\s+", " ", cleaned).strip()
@@ -76,23 +82,11 @@ def normalize_location_name(name: str | None) -> str | None:
     if not cleaned:
         return None
 
-    return cleaned
-
-
-def normalize_location_name(name: str | None) -> str | None:
-    """Remove common query glue without changing the centralized geocoding path."""
-    if not name:
+    # Disallow temporal phrases from being interpreted as a location
+    if TEMPORAL_PHRASES_RE.search(cleaned):
         return None
-    normalized = " ".join(str(name).strip().split())
-    # A malformed extractor can include the next sentence ("Ahmedabad. Is").
-    # Location names sent to this service are a single geocoding query, so the
-    # first sentence is the safe canonical candidate.
-    normalized = re.split(r"[.?!]", normalized, maxsplit=1)[0].strip()
-    normalized = re.sub(r"[?.!,;:]+$", "", normalized).strip()
-    # English and Indian-language postpositions which may trail a city returned
-    # by an LLM or fallback parser (for example, "Ahmedabad mein").
-    normalized = re.sub(r"\s+(?:in|at|for|mein|me|में|मा(?:ं|ँ)|માં|मध्ये|இல்)$", "", normalized, flags=re.IGNORECASE)
-    return normalized or None
+
+    return cleaned
 
 
 async def search_location(name: str):

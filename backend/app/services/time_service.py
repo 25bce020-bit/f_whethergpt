@@ -74,6 +74,10 @@ def get_time_range(time_value: str) -> tuple[int, int]:
     Return an hourly range as (start_hour, end_hour).
     """
 
+    if time_value in ("next_3_hours", "next_three_hours", "next_few_hours"):
+        current_hour = datetime.now(INDIA_TIMEZONE).hour
+        return current_hour, min(23, current_hour + 3)
+
     if time_value == "tonight":
         return 18, 23
 
@@ -97,6 +101,21 @@ def filter_hourly_forecast(hourly_forecast: list, time_value: str) -> list:
     """
 
     today = today_india()
+
+    # --------------------------------------------------------
+    # Next 3 hours
+    # --------------------------------------------------------
+
+    if time_value in ("next_3_hours", "next_three_hours", "next_few_hours"):
+        now_hour_iso = datetime.now(INDIA_TIMEZONE).strftime("%Y-%m-%dT%H:00")
+        future_hours = [
+            hour
+            for hour in hourly_forecast
+            if hour.get("time", "") >= now_hour_iso
+        ]
+        if not future_hours:
+            future_hours = hourly_forecast
+        return future_hours[:3]
 
     # --------------------------------------------------------
     # Next 24 hours

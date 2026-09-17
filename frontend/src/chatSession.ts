@@ -1,3 +1,5 @@
+import { clearSelectedLocation } from './locationSelection';
+
 const STORAGE_KEY = 'weathergpt_session';
 
 export function getChatSession(): string {
@@ -11,4 +13,5 @@ export function getChatSession(): string {
 
 export function startNewChat(): void {
   sessionStorage.setItem(STORAGE_KEY, `guest-${crypto.randomUUID()}`);
+  clearSelectedLocation();
 }
