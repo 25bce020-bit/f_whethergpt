@@ -147,6 +147,7 @@ from app.services.traveller_service import (
     build_traveller_advisory,
     format_traveller_advisory,
 )
+from app.services.mode_engines.registry import get_mode_engine
 from app.services.voice_service import (
     VoiceValidationError,
     browser_tts_contract,
@@ -1475,12 +1476,29 @@ async def process_chat_message(request: ChatRequest, current_user: User | None =
         matching_alerts = filter_alerts_for_location(
             all_alerts, latitude, longitude, location_info.get("name"), location_info.get("state")
         )
-        advisory = build_traveller_advisory(
-            destination=location_info["name"], current_weather=current_weather,
-            forecast=forecast, hourly_forecast=target_hourly,
-            imd_warnings=matching_alerts if cached_imd is not None else None,
-            time_hint=query.get("time"),
-        )
+        traveller_engine = get_mode_engine(mode_resolution.active_mode)
+        if traveller_engine is not None:
+            engine_context = {
+                "location": location_info,
+                "current_weather": current_weather,
+                "forecast": forecast,
+                "hourly_forecast": target_hourly,
+                "imd_warnings": matching_alerts if cached_imd is not None else None,
+            }
+            engine_result = await traveller_engine.process(
+                request_message=request.message,
+                query=query,
+                base_context=engine_context,
+            )
+            advisory = engine_result["traveller_advisory"]
+        else:
+            # Defensive fallback for an unavailable engine registration.
+            advisory = build_traveller_advisory(
+                destination=location_info["name"], current_weather=current_weather,
+                forecast=forecast, hourly_forecast=target_hourly,
+                imd_warnings=matching_alerts if cached_imd is not None else None,
+                time_hint=query.get("time"),
+            )
         data_for_llm = {"location": location_info, "traveller_advisory": advisory}
         try:
             response_text = await generate_mode_aware_response(data_for_llm)
